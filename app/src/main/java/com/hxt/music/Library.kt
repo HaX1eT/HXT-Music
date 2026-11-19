@@ -86,8 +86,16 @@ class Library(ctx: Context, private val client: OkHttpClient) {
         val mu = dlLocks.getOrPut(t.videoId) { Mutex() }
         mu.withLock {
             if (audioFile(t.videoId) == null) {
-                val (url, ext) = Music.audioStream(t.videoId)
-                download(url, File(audioDir, "${t.videoId}.$ext"))
+                try {
+                    Dbg.log("[${t.videoId}] скачивание: ${t.title}")
+                    val (url, ext) = Music.audioStream(t.videoId)
+                    Dbg.log("[${t.videoId}] ссылка: хост=${runCatching { android.net.Uri.parse(url).host }.getOrNull()}, ext=$ext")
+                    download(url, File(audioDir, "${t.videoId}.$ext"))
+                    Dbg.log("[${t.videoId}] файл сохранён")
+                } catch (e: Exception) {
+                    Dbg.log("[${t.videoId}] ОШИБКА скачивания: $e")
+                    throw e
+                }
             }
             val cover = coverFile(t.videoId)
             if (!cover.exists() && t.thumb.isNotBlank()) {
@@ -148,21 +156,24 @@ class Library(ctx: Context, private val client: OkHttpClient) {
     /** Обычная загрузка одним запросом. */
     private fun plain(url: String, out: File): Boolean {
         client.newCall(req(url)).execute().use { r ->
+            Dbg.log("plain: HTTP ${r.code}, размер=${r.body?.contentLength()}")
             if (!r.isSuccessful) return false
-            r.body!!.byteStream().use { i -> out.outputStream().use { o -> i.copyTo(o) } }
+            val n = r.body!!.byteStream().use { i -> out.outputStream().use { o -> i.copyTo(o) } }
+            Dbg.log("plain: скачано $n байт")
         }
         return true
     }
 
     /** Запасной вариант: кусками по 1 МБ через параметр range (если сервер режет обычную загрузку). */
     private fun chunked(url: String, out: File) {
+        Dbg.log("chunked: старт")
         out.delete()
         val step = 1_048_576L
         var start = 0L
         out.outputStream().use { o ->
             while (true) {
                 client.newCall(req("$url&range=$start-${start + step - 1}")).execute().use { r ->
-                    if (!r.isSuccessful) throw IOException("HTTP ${r.code}")
+                    if (!r.isSuccessful) { Dbg.log("chunked: HTTP ${r.code} на $start"); throw IOException("HTTP ${r.code}") }
                     val n = r.body!!.byteStream().copyTo(o)
                     start += n
                     if (n < step) return
