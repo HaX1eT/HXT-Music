@@ -117,6 +117,17 @@ class MusicVM(app: Application) : AndroidViewModel(app) {
         queue = queue.map(f)
     }
 
+    /** Восстановление/обновление backup Liked; вызывается при возврате в приложение. */
+    fun syncBackup() {
+        viewModelScope.launch {
+            val n = withContext(Dispatchers.IO) { lib.syncBackup() }
+            if (n > 0) {
+                refreshLiked()
+                toast("Восстановлено треков в Liked: $n")
+            }
+        }
+    }
+
     fun refreshLiked() {
         if (editing) return
         viewModelScope.launch { liked = withContext(Dispatchers.IO) { lib.likedTracks() } }
@@ -309,3 +320,4 @@ class MusicVM(app: Application) : AndroidViewModel(app) {
         }
     }
 }
+
