@@ -19,6 +19,7 @@ import java.util.concurrent.ConcurrentHashMap
  * Логика один в один с server.py.
  */
 class Library(ctx: Context, private val client: OkHttpClient) {
+    private val appCtx: Context = ctx.applicationContext
     private val base = File(ctx.filesDir, "library").apply { mkdirs() }
     private val audioDir = File(base, "audio").apply { mkdirs() }
     private val coversDir = File(base, "covers").apply { mkdirs() }
@@ -51,6 +52,40 @@ class Library(ctx: Context, private val client: OkHttpClient) {
         dbFile.writeText(o.toString())
     }
 
+    /** Копия Liked на внешнее хранилище (только если выдан доступ). Вызывать под lock. */
+    private fun writeBackup() {
+        if (!hasBackupAccess()) return
+        Backup.write(likedTracks())
+    }
+
+    private fun hasBackupAccess() = Backup.hasAccess(appCtx)
+
+    /**
+     * Подтягивает из backup треки, которых нет в локальной базе (после переустановки),
+     * затем перезаписывает backup актуальным состоянием. Аудио не качается —
+     * оно скачается при первом воспроизведении. Возвращает число восстановленных.
+     */
+    fun syncBackup(): Int = synchronized(lock) {
+        if (!hasBackupAccess()) return 0
+        val saved = Backup.read()
+        var restored = 0
+        for (t in saved) {
+            if (db.containsKey(t.videoId)) continue
+            db[t.videoId] = JSONObject().put("title", t.title).put("artist", t.artist)
+                .put("duration", t.duration).put("thumb", t.thumb).put("liked", true)
+            restored++
+        }
+        if (restored > 0) {
+            saveDb()
+            // порядок из backup; свои (локальные) позиции сохраняем после
+            val ids = saved.map { it.videoId }
+            order = ids + order.filter { it !in ids }
+            orderFile.writeText(JSONArray(order).toString())
+        }
+        writeBackup()
+        restored
+    }
+
     fun audioFile(vid: String): File? =
         audioDir.listFiles()?.firstOrNull { it.name.substringBeforeLast('.') == vid && !it.name.endsWith(".part") }
 
@@ -79,6 +114,7 @@ class Library(ctx: Context, private val client: OkHttpClient) {
     fun saveOrder(ids: List<String>) = synchronized(lock) {
         order = ids
         orderFile.writeText(JSONArray(ids).toString())
+        writeBackup()
     }
 
     /** Скачивает аудио и обложку, только если их ещё нет. */
@@ -119,6 +155,7 @@ class Library(ctx: Context, private val client: OkHttpClient) {
                 val now = !e.optBoolean("liked", false)
                 e.put("liked", now)
                 saveDb()
+                writeBackup()
                 now
             }
         }
@@ -128,6 +165,7 @@ class Library(ctx: Context, private val client: OkHttpClient) {
         synchronized(lock) {
             db.getOrPut(vid) { JSONObject() }.put("liked", value)
             saveDb()
+            writeBackup()
         }
     }
 
