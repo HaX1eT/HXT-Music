@@ -86,6 +86,37 @@ class Library(ctx: Context, private val client: OkHttpClient) {
         restored
     }
 
+    /**
+     * Ручной бэкап: ничего локального не удаляется. Всё из liked.json добавляется в Liked
+     * (в конец, после текущих), затем в liked.json записывается объединённый список —
+     * так в копию попадают и треки, лайкнутые до включения бэкапа.
+     * Возвращает (сколько добавлено из копии, сколько теперь всего) или null, если нет доступа.
+     */
+    fun mergeBackup(): Pair<Int, Int>? = synchronized(lock) {
+        if (!hasBackupAccess()) return null
+        val current = likedTracks().map { it.videoId }
+        val saved = Backup.read()
+        var added = 0
+        for (t in saved) {
+            val e = db[t.videoId]
+            if (e == null) {
+                db[t.videoId] = JSONObject().put("title", t.title).put("artist", t.artist)
+                    .put("duration", t.duration).put("thumb", t.thumb).put("liked", true)
+                added++
+            } else if (!e.optBoolean("liked", false)) {
+                e.put("liked", true)
+                added++
+            }
+        }
+        if (added > 0) {
+            saveDb()
+            order = current + saved.map { it.videoId }.filter { it !in current }
+            orderFile.writeText(JSONArray(order).toString())
+        }
+        writeBackup()
+        added to likedTracks().size
+    }
+
     fun audioFile(vid: String): File? =
         audioDir.listFiles()?.firstOrNull { it.name.substringBeforeLast('.') == vid && !it.name.endsWith(".part") }
 
