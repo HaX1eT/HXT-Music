@@ -2,6 +2,8 @@ package com.hxt.music
 
 import android.Manifest
 import android.content.ComponentName
+import android.content.Intent
+import android.provider.Settings
 import android.content.pm.PackageManager
 import android.graphics.Color as AColor
 import android.os.Build
@@ -41,6 +43,18 @@ class MainActivity : ComponentActivity() {
     private val vm: MusicVM by viewModels()
     private var controller: ListenableFuture<MediaController>? = null
     private val notifPerm = registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
+    private val storagePerm = registerForActivityResult(ActivityResultContracts.RequestPermission()) { vm.syncBackup() }
+    private var askBackup by mutableStateOf(false)
+    private val prefs by lazy { getSharedPreferences("hxt", MODE_PRIVATE) }
+
+    private fun requestBackupAccess() {
+        askBackup = false
+        val i = Backup.settingsIntent(this)
+        if (i == null) { storagePerm.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE); return }
+        try { startActivity(i) } catch (e: Exception) {
+            runCatching { startActivity(Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)) }
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -52,7 +66,20 @@ class MainActivity : ComponentActivity() {
         if (Build.VERSION.SDK_INT >= 33 &&
             ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
         ) notifPerm.launch(Manifest.permission.POST_NOTIFICATIONS)
-        setContent { HxtApp(vm) }
+        askBackup = !Backup.hasAccess(this) && !prefs.getBoolean("backup_declined", false)
+        setContent {
+            HxtApp(vm)
+            if (askBackup) BackupDialog(
+                onAllow = { requestBackupAccess() },
+                onLater = { askBackup = false; prefs.edit().putBoolean("backup_declined", true).apply() },
+            )
+        }
+    }
+
+    // Вернулись из настроек (или просто открыли приложение): восстановить/обновить liked.json
+    override fun onResume() {
+        super.onResume()
+        if (Backup.hasAccess(this)) { askBackup = false; vm.syncBackup() }
     }
 
     // Подключаемся к сервису, чтобы он жил как медиа-сервис с уведомлением и кнопками на экране блокировки
