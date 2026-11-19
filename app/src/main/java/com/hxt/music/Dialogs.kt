@@ -20,6 +20,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -36,6 +38,7 @@ fun ImportDialog(vm: MusicVM, onDismiss: () -> Unit) {
     )
     val sheet = RoundedCornerShape(22.dp)
     val none = remember { MutableInteractionSource() }
+    val clipboard = LocalClipboardManager.current
 
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Box(
@@ -87,7 +90,17 @@ fun ImportDialog(vm: MusicVM, onDismiss: () -> Unit) {
                         )
                     }
                 }
-                Spacer(Modifier.height(14.dp))
+                Spacer(Modifier.height(12.dp))
+                Box(
+                    Modifier.fillMaxWidth().height(40.dp).clip(RoundedCornerShape(12.dp)).background(Col.Card)
+                        .border(1.dp, Col.Line, RoundedCornerShape(12.dp))
+                        .pressable(scaleDown = .97f) {
+                            clipboard.setText(AnnotatedString(Dbg.dump().ifBlank { "(лог пуст)" }))
+                            vm.toast("Лог скопирован")
+                        },
+                    contentAlignment = Alignment.Center,
+                ) { T("Скопировать лог", 13, FontWeight.SemiBold, color = Col.Muted) }
+                Spacer(Modifier.height(12.dp))
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.End)) {
                     Box(
                         Modifier.height(44.dp).clip(RoundedCornerShape(12.dp)).background(Col.Card)
