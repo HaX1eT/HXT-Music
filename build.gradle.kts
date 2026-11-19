@@ -109,4 +109,5 @@ dependencies {
 
     // yt-dlp внутри приложения — как в веб-версии (основной способ получить ссылку на аудио)
     implementation("io.github.junkfood02.youtubedl-android:library:0.17.4")
+    implementation("io.github.junkfood02.youtubedl-android:common:0.17.4")
 }
