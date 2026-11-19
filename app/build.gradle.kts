@@ -14,6 +14,9 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "1.0"
+
+        // yt-dlp (с Python) весит много — оставляем только ARM-архитектуры телефонов.
+        ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
     }
 
     // Подпись: если в CI заданы секреты (KEYSTORE_PATH и т.д.) — берём их,
@@ -64,6 +67,8 @@ android {
     }
 
     packaging {
+        // youtubedl-android распаковывает Python/yt-dlp из нативных библиотек при первом запуске.
+        jniLibs { useLegacyPackaging = true }
         resources {
             excludes += setOf(
                 "/META-INF/{AL2.0,LGPL2.1}",
@@ -100,5 +105,9 @@ dependencies {
     implementation("sh.calvin.reorderable:reorderable:2.4.3")
 
     // Поиск YouTube Music и ссылки на аудио — без сервера и без yt-dlp
-    implementation("com.github.TeamNewPipe:NewPipeExtractor:v0.24.6")
+    implementation("com.github.TeamNewPipe:NewPipeExtractor:v0.26.5")
+
+    // yt-dlp внутри приложения — как в веб-версии (основной способ получить ссылку на аудио)
+    implementation("io.github.junkfood02.youtubedl-android:library:0.17.4")
+    implementation("io.github.junkfood02.youtubedl-android:common:0.17.4")
 }
