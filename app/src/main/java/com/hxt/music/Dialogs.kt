@@ -30,7 +30,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 
 @Composable
-fun ImportDialog(vm: MusicVM, onDismiss: () -> Unit) {
+fun ImportDialog(vm: MusicVM, onBackup: () -> Unit, onDismiss: () -> Unit) {
     var text by remember { mutableStateOf("") }
     val frac by animateFloatAsState(
         if (vm.importTotal > 0) vm.importDone.toFloat() / vm.importTotal else 0f,
@@ -91,6 +91,13 @@ fun ImportDialog(vm: MusicVM, onDismiss: () -> Unit) {
                     }
                 }
                 Spacer(Modifier.height(12.dp))
+                Box(
+                    Modifier.fillMaxWidth().height(40.dp).clip(RoundedCornerShape(12.dp)).background(Col.Card)
+                        .border(1.dp, Col.Line, RoundedCornerShape(12.dp))
+                        .pressable(scaleDown = .97f) { onBackup(); onDismiss() },
+                    contentAlignment = Alignment.Center,
+                ) { T("Бэкап лайков", 13, FontWeight.SemiBold) }
+                Spacer(Modifier.height(8.dp))
                 Box(
                     Modifier.fillMaxWidth().height(40.dp).clip(RoundedCornerShape(12.dp)).background(Col.Card)
                         .border(1.dp, Col.Line, RoundedCornerShape(12.dp))
