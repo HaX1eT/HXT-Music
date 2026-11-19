@@ -1,6 +1,8 @@
 package com.hxt.music
 
 import okhttp3.MediaType.Companion.toMediaType
+import com.yausername.youtubedl_android.YoutubeDL
+import com.yausername.youtubedl_android.YoutubeDLRequest
 import okhttp3.OkHttpClient
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
@@ -68,27 +70,44 @@ object Music {
         return Track(id, name, artist, dur, bigThumb(thumb))
     }
 
+    @Volatile var ytdlpReady = false
+
     /**
      * Прямая ссылка на лучший аудиопоток (m4a в приоритете) + расширение файла.
-     * Сначала NewPipeExtractor (3 попытки: YouTube иногда отвечает «page needs to be reloaded»
-     * через раз), потом запасной запрос клиентом ANDROID_VR.
+     * Порядок: yt-dlp (как в веб-версии) → NewPipeExtractor → ANDROID_VR.
      */
     fun audioStream(vid: String): Pair<String, String> {
-        var first: Exception? = null
-        for (attempt in 1..3) {
+        val errors = mutableListOf<String>()
+        if (ytdlpReady) {
             try {
-                return audioViaNewPipe(vid)
+                return audioViaYtDlp(vid)
             } catch (e: Exception) {
-                if (first == null) first = e
-                if (attempt < 3) Thread.sleep(attempt * 1000L)
+                errors += "YT: ${e.message ?: "ошибка"}"
             }
+        } else {
+            errors += "YT: не запущен"
+        }
+        try {
+            return audioViaNewPipe(vid)
+        } catch (e: Exception) {
+            errors += "NP: ${e.message ?: "ошибка"}"
         }
         try {
             return audioViaAndroidVr(vid)
         } catch (e: Exception) {
-            // В списке импорта сообщение обрезается до 80 символов — причину запасного пути ставим первой.
-            throw IOException("VR: ${e.message ?: "ошибка"} | NP: ${first?.message ?: "ошибка"}")
+            errors += "VR: ${e.message ?: "ошибка"}"
         }
+        throw IOException(errors.joinToString(" | "))
+    }
+
+    private fun audioViaYtDlp(vid: String): Pair<String, String> {
+        val req = YoutubeDLRequest("https://www.youtube.com/watch?v=$vid")
+        req.addOption("-f", "bestaudio[ext=m4a]/bestaudio")
+        req.addOption("--no-playlist")
+        val info = YoutubeDL.getInstance().getInfo(req)
+        val url = info.url?.takeIf { it.isNotBlank() } ?: throw IOException("нет ссылки")
+        val ext = info.ext?.takeIf { it.isNotBlank() } ?: "m4a"
+        return url to ext
     }
 
     private fun audioViaNewPipe(vid: String): Pair<String, String> {
