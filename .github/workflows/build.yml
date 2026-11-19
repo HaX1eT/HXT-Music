@@ -66,6 +66,16 @@ jobs:
       - name: Build release APK
         run: gradle :app:assembleRelease --no-daemon --stacktrace
 
+      # Диагностика: если сборка упала, показываем, какие классы yt-dlp реально лежат в библиотеке.
+      - name: Debug youtubedl classes
+        if: failure()
+        run: |
+          find ~/.gradle -path "*junkfood02*" \( -name "*.aar" -o -name "*.jar" \) | while read f; do
+            echo "== $f"
+            unzip -l "$f" | grep -i "\.class\|classes.jar" | head -20
+            tmp=$(mktemp -d); unzip -q -o "$f" classes.jar -d "$tmp" 2>/dev/null && unzip -l "$tmp/classes.jar" | grep -i "YoutubeDL" | head -20
+          done || true
+
       - name: Rename APK
         run: cp app/build/outputs/apk/release/app-release.apk HXT-Music.apk
 
