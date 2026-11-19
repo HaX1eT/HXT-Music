@@ -68,7 +68,7 @@ class MainActivity : ComponentActivity() {
         ) notifPerm.launch(Manifest.permission.POST_NOTIFICATIONS)
         askBackup = !Backup.hasAccess(this) && !prefs.getBoolean("backup_declined", false)
         setContent {
-            HxtApp(vm)
+            HxtApp(vm, onBackup = { if (Backup.hasAccess(this)) vm.mergeBackup() else requestBackupAccess() })
             if (askBackup) BackupDialog(
                 onAllow = { requestBackupAccess() },
                 onLater = { askBackup = false; prefs.edit().putBoolean("backup_declined", true).apply() },
@@ -97,7 +97,7 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun HxtApp(vm: MusicVM) {
+fun HxtApp(vm: MusicVM, onBackup: () -> Unit) {
     var full by remember { mutableStateOf(false) }
     var settings by remember { mutableStateOf(false) }
     var miniH by remember { mutableStateOf(160.dp) }
@@ -154,5 +154,5 @@ fun HxtApp(vm: MusicVM) {
         }
     }
 
-    if (settings) ImportDialog(vm) { settings = false }
+    if (settings) ImportDialog(vm, onBackup) { settings = false }
 }
