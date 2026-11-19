@@ -120,3 +120,49 @@ fun ImportDialog(vm: MusicVM, onDismiss: () -> Unit) {
         }
     }
 }
+
+@Composable
+fun BackupDialog(onAllow: () -> Unit, onLater: () -> Unit) {
+    val sheet = RoundedCornerShape(22.dp)
+    val none = remember { MutableInteractionSource() }
+    Dialog(onDismissRequest = onLater, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Box(
+            Modifier.fillMaxSize().background(Color.Black.copy(alpha = .55f))
+                .clickable(interactionSource = none, indication = null) { onLater() }
+                .padding(20.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Column(
+                Modifier.widthIn(max = 560.dp).fillMaxWidth()
+                    .clip(sheet).background(Col.Panel).border(1.dp, Col.Line, sheet)
+                    .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { }
+                    .padding(26.dp),
+            ) {
+                T("Сохранять Liked", 18, FontWeight.SemiBold, display = true)
+                Spacer(Modifier.height(8.dp))
+                T(
+                    "Список Liked (только названия, без аудио) будет копироваться в файл HXT Music/liked.json во внутренней памяти. " +
+                        "После удаления и новой установки треки вернутся в Liked, а скачаются при первом воспроизведении. " +
+                        "Нужен доступ к файлам.",
+                    14, color = Col.Muted, maxLines = 8,
+                )
+                Spacer(Modifier.height(18.dp))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.End)) {
+                    Box(
+                        Modifier.height(44.dp).clip(RoundedCornerShape(12.dp)).background(Col.Card)
+                            .border(1.dp, Col.Line, RoundedCornerShape(12.dp)).pressable(scaleDown = .95f, onClick = onLater)
+                            .padding(horizontal = 20.dp),
+                        contentAlignment = Alignment.Center,
+                    ) { T("Не сейчас", 15, FontWeight.Bold) }
+                    Box(
+                        Modifier.height(44.dp).clip(RoundedCornerShape(12.dp))
+                            .background(Brush.linearGradient(listOf(Col.RedHi, Col.RedDeep)))
+                            .pressable(scaleDown = .95f, onClick = onAllow)
+                            .padding(horizontal = 20.dp),
+                        contentAlignment = Alignment.Center,
+                    ) { T("Разрешить", 15, FontWeight.Bold) }
+                }
+            }
+        }
+    }
+}
