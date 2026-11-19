@@ -1,7 +1,9 @@
 package com.hxt.music
 
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONObject
 import org.schabi.newpipe.extractor.MediaFormat
 import org.schabi.newpipe.extractor.ServiceList
 import org.schabi.newpipe.extractor.downloader.Downloader
@@ -13,6 +15,7 @@ import org.schabi.newpipe.extractor.stream.DeliveryMethod
 import org.schabi.newpipe.extractor.stream.StreamInfo
 import org.schabi.newpipe.extractor.stream.StreamInfoItem
 import java.io.IOException
+import java.util.concurrent.TimeUnit
 
 const val UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) Gecko/20100101 Firefox/128.0"
 
@@ -65,8 +68,30 @@ object Music {
         return Track(id, name, artist, dur, bigThumb(thumb))
     }
 
-    /** Прямая ссылка на лучший аудиопоток (m4a в приоритете) + расширение файла. */
+    /**
+     * Прямая ссылка на лучший аудиопоток (m4a в приоритете) + расширение файла.
+     * Сначала NewPipeExtractor (3 попытки: YouTube иногда отвечает «page needs to be reloaded»
+     * через раз), потом запасной запрос клиентом ANDROID_VR.
+     */
     fun audioStream(vid: String): Pair<String, String> {
+        var first: Exception? = null
+        for (attempt in 1..3) {
+            try {
+                return audioViaNewPipe(vid)
+            } catch (e: Exception) {
+                if (first == null) first = e
+                if (attempt < 3) Thread.sleep(attempt * 1000L)
+            }
+        }
+        try {
+            return audioViaAndroidVr(vid)
+        } catch (e: Exception) {
+            // В списке импорта сообщение обрезается до 80 символов — причину запасного пути ставим первой.
+            throw IOException("VR: ${e.message ?: "ошибка"} | NP: ${first?.message ?: "ошибка"}")
+        }
+    }
+
+    private fun audioViaNewPipe(vid: String): Pair<String, String> {
         val info = StreamInfo.getInfo(ServiceList.YouTube, "https://www.youtube.com/watch?v=$vid")
         val http = info.audioStreams.filter { it.deliveryMethod == DeliveryMethod.PROGRESSIVE_HTTP }
         val best = http.filter { it.format == MediaFormat.M4A }.maxByOrNull { it.averageBitrate }
@@ -74,5 +99,69 @@ object Music {
             ?: throw IOException("Нет доступного аудиопотока")
         val ext = best.format?.suffix ?: "m4a"
         return best.content to ext
+    }
+
+    private const val VR_VERSION = "1.60.19"
+    private const val VR_UA =
+        "com.google.android.apps.youtube.vr.oculus/$VR_VERSION (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip"
+
+    private val fallbackHttp by lazy {
+        OkHttpClient.Builder()
+            .connectTimeout(20, TimeUnit.SECONDS)
+            .readTimeout(30, TimeUnit.SECONDS)
+            .build()
+    }
+
+    /** Запасной путь: запрос плеера InnerTube клиентом ANDROID_VR — отдаёт прямые ссылки без подписи. */
+    private fun audioViaAndroidVr(vid: String): Pair<String, String> {
+        val client = JSONObject()
+            .put("clientName", "ANDROID_VR")
+            .put("clientVersion", VR_VERSION)
+            .put("deviceMake", "Oculus")
+            .put("deviceModel", "Quest 3")
+            .put("androidSdkVersion", 32)
+            .put("osName", "Android")
+            .put("osVersion", "12L")
+            .put("hl", "en")
+            .put("gl", "US")
+        val body = JSONObject()
+            .put("context", JSONObject().put("client", client))
+            .put("videoId", vid)
+            .put("contentCheckOk", true)
+            .put("racyCheckOk", true)
+        val req = okhttp3.Request.Builder()
+            .url("https://youtubei.googleapis.com/youtubei/v1/player?prettyPrint=false")
+            .header("User-Agent", VR_UA)
+            .header("X-YouTube-Client-Name", "28")
+            .header("X-YouTube-Client-Version", VR_VERSION)
+            .post(body.toString().toRequestBody("application/json".toMediaType()))
+            .build()
+        fallbackHttp.newCall(req).execute().use { r ->
+            val text = r.body?.string().orEmpty()
+            if (!r.isSuccessful) throw IOException("HTTP ${r.code}")
+            val json = JSONObject(text)
+            val formats = json.optJSONObject("streamingData")?.optJSONArray("adaptiveFormats")
+            if (formats == null) {
+                val reason = json.optJSONObject("playabilityStatus")?.optString("reason").orEmpty()
+                throw IOException(reason.ifBlank { "нет потоков" })
+            }
+            var bestUrl: String? = null
+            var bestExt = "m4a"
+            var bestScore = -1L
+            for (i in 0 until formats.length()) {
+                val f = formats.optJSONObject(i) ?: continue
+                val mime = f.optString("mimeType")
+                val url = f.optString("url")
+                if (!mime.startsWith("audio/") || url.isBlank()) continue
+                val isMp4 = mime.startsWith("audio/mp4")
+                val score = (if (isMp4) 1_000_000_000L else 0L) + f.optLong("bitrate")   // m4a в приоритете
+                if (score > bestScore) {
+                    bestScore = score
+                    bestUrl = url
+                    bestExt = if (isMp4) "m4a" else "webm"
+                }
+            }
+            return (bestUrl ?: throw IOException("нет аудио со ссылкой")) to bestExt
+        }
     }
 }
