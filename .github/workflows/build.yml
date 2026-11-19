@@ -66,15 +66,22 @@ jobs:
       - name: Build release APK
         run: gradle :app:assembleRelease --no-daemon --stacktrace
 
-      # Диагностика: если сборка упала, показываем, какие классы yt-dlp реально лежат в библиотеке.
+      # Диагностика: если сборка упала, показываем, подключилась ли библиотека yt-dlp и какие классы в ней есть.
       - name: Debug youtubedl classes
         if: failure()
         run: |
-          find ~/.gradle -path "*junkfood02*" \( -name "*.aar" -o -name "*.jar" \) | while read f; do
+          echo "GRADLE_USER_HOME=$GRADLE_USER_HOME"
+          echo "--- dependencies (compile classpath) ---"
+          gradle :app:dependencies --configuration releaseCompileClasspath --no-daemon 2>&1 | grep -i "youtubedl\|junkfood\|FAILED" || echo "в compile classpath библиотеки нет"
+          echo "--- files ---"
+          find / \( -path /proc -o -path /sys \) -prune -o -path "*junkfood02*" \( -name "*.aar" -o -name "*.jar" -o -name "*.pom" \) -print 2>/dev/null | head -20
+          echo "--- classes ---"
+          find / \( -path /proc -o -path /sys \) -prune -o -path "*junkfood02*" -name "*.aar" -print 2>/dev/null | while read f; do
             echo "== $f"
-            unzip -l "$f" | grep -i "\.class\|classes.jar" | head -20
-            tmp=$(mktemp -d); unzip -q -o "$f" classes.jar -d "$tmp" 2>/dev/null && unzip -l "$tmp/classes.jar" | grep -i "YoutubeDL" | head -20
-          done || true
+            tmp=$(mktemp -d)
+            unzip -q -o "$f" classes.jar -d "$tmp" 2>/dev/null && unzip -l "$tmp/classes.jar" | grep -i "YoutubeDL" | head -20
+          done
+          true
 
       - name: Rename APK
         run: cp app/build/outputs/apk/release/app-release.apk HXT-Music.apk
