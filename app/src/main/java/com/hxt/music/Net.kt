@@ -100,14 +100,36 @@ object Music {
         throw IOException(errors.joinToString(" | "))
     }
 
+    /** Общая блокировка: обновление yt-dlp и получение ссылки не должны идти одновременно. */
+    val ytLock = Any()
+
+    private val ytPool = java.util.concurrent.Executors.newCachedThreadPool { r ->
+        Thread(r).apply { isDaemon = true }
+    }
+
+    /** yt-dlp с таймаутом 45 с: раньше зависание давало «бесконечную загрузку», теперь — переход на запасные способы. */
     private fun audioViaYtDlp(vid: String): Pair<String, String> {
-        val req = YoutubeDLRequest("https://www.youtube.com/watch?v=$vid")
-        req.addOption("-f", "bestaudio[ext=m4a]/bestaudio")
-        req.addOption("--no-playlist")
-        val info = YoutubeDL.getInstance().getInfo(req)
-        val url = info.url?.takeIf { it.isNotBlank() } ?: throw IOException("нет ссылки")
-        val ext = info.ext?.takeIf { it.isNotBlank() } ?: "m4a"
-        return url to ext
+        val task = ytPool.submit(java.util.concurrent.Callable {
+            synchronized(ytLock) {
+                val req = YoutubeDLRequest("https://www.youtube.com/watch?v=$vid")
+                req.addOption("-f", "bestaudio[ext=m4a]/bestaudio")
+                req.addOption("--no-playlist")
+                req.addOption("--socket-timeout", "15")
+                req.addOption("--retries", "1")
+                val info = YoutubeDL.getInstance().getInfo(req)
+                val url = info.url?.takeIf { it.isNotBlank() } ?: throw IOException("нет ссылки")
+                val ext = info.ext?.takeIf { it.isNotBlank() } ?: "m4a"
+                url to ext
+            }
+        })
+        try {
+            return task.get(45, TimeUnit.SECONDS)
+        } catch (e: java.util.concurrent.TimeoutException) {
+            task.cancel(true)
+            throw IOException("таймаут 45 с")
+        } catch (e: java.util.concurrent.ExecutionException) {
+            throw IOException(e.cause?.message ?: "ошибка")
+        }
     }
 
     private fun audioViaNewPipe(vid: String): Pair<String, String> {
