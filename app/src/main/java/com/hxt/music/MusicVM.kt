@@ -128,6 +128,16 @@ class MusicVM(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** Кнопка «Бэкап лайков»: объединяет локальный Liked и liked.json, результат пишет в liked.json. */
+    fun mergeBackup() {
+        viewModelScope.launch {
+            val r = withContext(Dispatchers.IO) { lib.mergeBackup() }
+            if (r == null) { toast("Нет доступа к файлам"); return@launch }
+            refreshLiked()
+            toast(if (r.first > 0) "Бэкап: добавлено из копии ${r.first}, всего ${r.second}" else "Бэкап обновлён, треков: ${r.second}")
+        }
+    }
+
     fun refreshLiked() {
         if (editing) return
         viewModelScope.launch { liked = withContext(Dispatchers.IO) { lib.likedTracks() } }
@@ -320,4 +330,3 @@ class MusicVM(app: Application) : AndroidViewModel(app) {
         }
     }
 }
-
