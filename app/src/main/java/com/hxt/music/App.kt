@@ -22,9 +22,16 @@ class App : Application() {
             .build()
         NewPipe.init(NpDownloader(http))
         // yt-dlp: инициализация + обновление в фоне (YouTube часто меняется, свежий yt-dlp важен)
-        Music.ytdlpReady = runCatching { YoutubeDL.getInstance().init(this) }.isSuccess
+        val init = runCatching { YoutubeDL.getInstance().init(this) }
+        Music.ytdlpReady = init.isSuccess
+        Dbg.log("yt-dlp init: " + (if (init.isSuccess) "ок" else "ОШИБКА ${init.exceptionOrNull()}"))
         if (Music.ytdlpReady) {
-            Thread { synchronized(Music.ytLock) { runCatching { YoutubeDL.getInstance().updateYoutubeDL(this) } } }.start()
+            Thread {
+                synchronized(Music.ytLock) {
+                    val r = runCatching { YoutubeDL.getInstance().updateYoutubeDL(this) }
+                    Dbg.log("yt-dlp update: " + (if (r.isSuccess) "${r.getOrNull()}" else "ОШИБКА ${r.exceptionOrNull()}"))
+                }
+            }.start()
         }
         lib = Library(this, http)
         player = ExoPlayer.Builder(this)
