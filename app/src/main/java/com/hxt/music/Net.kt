@@ -19,6 +19,21 @@ import org.schabi.newpipe.extractor.stream.StreamInfoItem
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 
+/** Простой журнал в памяти (последние 300 строк): кнопка «Скопировать лог» в окне импорта. */
+object Dbg {
+    private val lines = java.util.ArrayDeque<String>()
+    private val fmt = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US)
+
+    fun log(msg: String) {
+        synchronized(lines) {
+            lines.addLast("${fmt.format(java.util.Date())} $msg")
+            while (lines.size > 300) lines.removeFirst()
+        }
+    }
+
+    fun dump(): String = synchronized(lines) { lines.joinToString("\n") }
+}
+
 const val UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) Gecko/20100101 Firefox/128.0"
 
 /** HTTP-слой для NewPipeExtractor поверх OkHttp. */
@@ -78,23 +93,32 @@ object Music {
      */
     fun audioStream(vid: String): Pair<String, String> {
         val errors = mutableListOf<String>()
+        val t0 = System.currentTimeMillis()
+        fun ms() = "${System.currentTimeMillis() - t0} мс"
         if (ytdlpReady) {
             try {
-                return audioViaYtDlp(vid)
+                Dbg.log("[$vid] yt-dlp: запрос")
+                return audioViaYtDlp(vid).also { Dbg.log("[$vid] yt-dlp: ок за ${ms()}") }
             } catch (e: Exception) {
+                Dbg.log("[$vid] yt-dlp: ОШИБКА за ${ms()}: ${e.message}")
                 errors += "YT: ${e.message ?: "ошибка"}"
             }
         } else {
+            Dbg.log("[$vid] yt-dlp не запущен — пропуск")
             errors += "YT: не запущен"
         }
         try {
-            return audioViaNewPipe(vid)
+            Dbg.log("[$vid] NewPipe: запрос")
+            return audioViaNewPipe(vid).also { Dbg.log("[$vid] NewPipe: ок за ${ms()}") }
         } catch (e: Exception) {
+            Dbg.log("[$vid] NewPipe: ОШИБКА за ${ms()}: ${e.message}")
             errors += "NP: ${e.message ?: "ошибка"}"
         }
         try {
-            return audioViaAndroidVr(vid)
+            Dbg.log("[$vid] VR: запрос")
+            return audioViaAndroidVr(vid).also { Dbg.log("[$vid] VR: ок за ${ms()}") }
         } catch (e: Exception) {
+            Dbg.log("[$vid] VR: ОШИБКА за ${ms()}: ${e.message}")
             errors += "VR: ${e.message ?: "ошибка"}"
         }
         throw IOException(errors.joinToString(" | "))
