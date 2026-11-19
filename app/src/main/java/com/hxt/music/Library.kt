@@ -144,13 +144,70 @@ class Library(ctx: Context, private val client: OkHttpClient) {
     private fun download(url: String, dest: File) {
         val part = File(dest.path + ".part")
         try {
-            if (!plain(url, part)) chunked(url, part)
+            ranged(url, part)
             if (part.length() == 0L) throw IOException("Пустой файл")
             dest.delete()
             if (!part.renameTo(dest)) throw IOException("Не удалось сохранить файл")
         } finally {
             part.delete()
         }
+    }
+
+    private class Chunk(val bytes: ByteArray, val total: Long, val whole: Boolean)
+
+    private fun fetchChunk(url: String, start: Long, step: Long): Chunk {
+        val rq = Request.Builder().url(url).header("User-Agent", UA)
+            .header("Range", "bytes=$start-${start + step - 1}").build()
+        return client.newCall(rq).execute().use { r ->
+            if (r.code != 200 && r.code != 206) throw IOException("HTTP ${r.code}")
+            val bytes = r.body!!.bytes()
+            val whole = r.code == 200
+            val total = if (whole) bytes.size.toLong()
+            else r.header("Content-Range")?.substringAfter('/')?.toLongOrNull() ?: -1L
+            Chunk(bytes, total, whole)
+        }
+    }
+
+    private fun fetchChunkRetry(url: String, start: Long, step: Long): Chunk {
+        var attempt = 0
+        while (true) {
+            try {
+                return fetchChunk(url, start, step)
+            } catch (e: IOException) {
+                attempt++
+                Dbg.log("кусок с $start: попытка $attempt: $e")
+                if (attempt >= 4) throw e
+                Thread.sleep(500L * attempt)
+            }
+        }
+    }
+
+    /**
+     * Загрузка кусками по 1 МБ через заголовок Range (так делает и yt-dlp).
+     * YouTube рвёт соединение («Software caused connection abort»), если качать файл целиком одним запросом.
+     * Каждый кусок читается в память и при обрыве перезапрашивается заново.
+     */
+    private fun ranged(url: String, out: File) {
+        out.delete()
+        val step = 1_048_576L
+        var start = 0L
+        var total = -1L
+        out.outputStream().use { o ->
+            while (total < 0 || start < total) {
+                val c = fetchChunkRetry(url, start, step)
+                if (c.whole && start != 0L) throw IOException("сервер игнорирует Range")
+                if (c.bytes.isEmpty()) throw IOException("пустой кусок")
+                o.write(c.bytes)
+                start += c.bytes.size
+                total = when {
+                    c.whole -> start
+                    c.total >= 0 -> c.total
+                    c.bytes.size < step -> start
+                    else -> -1L
+                }
+            }
+        }
+        Dbg.log("ranged: готово, $start байт")
     }
 
     /** Обычная загрузка одним запросом. */
