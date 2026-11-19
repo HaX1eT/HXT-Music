@@ -24,7 +24,7 @@ class App : Application() {
         // yt-dlp: инициализация + обновление в фоне (YouTube часто меняется, свежий yt-dlp важен)
         Music.ytdlpReady = runCatching { YoutubeDL.getInstance().init(this) }.isSuccess
         if (Music.ytdlpReady) {
-            Thread { runCatching { YoutubeDL.getInstance().updateYoutubeDL(this) } }.start()
+            Thread { synchronized(Music.ytLock) { runCatching { YoutubeDL.getInstance().updateYoutubeDL(this) } } }.start()
         }
         lib = Library(this, http)
         player = ExoPlayer.Builder(this)
