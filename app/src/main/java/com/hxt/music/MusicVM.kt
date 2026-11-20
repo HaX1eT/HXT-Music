@@ -45,6 +45,14 @@ class MusicVM(app: Application) : AndroidViewModel(app) {
     var repeat by mutableIntStateOf(0)        // 0 выкл, 1 всё, 2 один трек
     var shuffle by mutableStateOf(false)
 
+    // текст песни
+    var showLyrics by mutableStateOf(false)
+    var lyrics by mutableStateOf<Lyrics?>(null)
+    var lyricsLoading by mutableStateOf(false)
+    var lyricsError by mutableStateOf(false)
+    var lyricsVid by mutableStateOf<String?>(null)
+    private var lyricsJob: Job? = null
+
     // прочее
     var editing by mutableStateOf(false)
     var toastMsg by mutableStateOf<String?>(null)
@@ -278,6 +286,31 @@ class MusicVM(app: Application) : AndroidViewModel(app) {
 
     fun seekFraction(f: Float) {
         if (durationMs > 0) player.seekTo((f * durationMs).toLong())
+    }
+
+    fun seekMs(ms: Long) {
+        if (durationMs > 0) player.seekTo(ms.coerceIn(0L, durationMs))
+    }
+
+    fun toggleLyrics() { showLyrics = !showLyrics }
+
+    /** Загружает текст трека (из кеша или с lrclib). Повторный вызов для того же трека ничего не делает. */
+    fun loadLyrics(t: Track, force: Boolean = false) {
+        if (!force && lyricsVid == t.videoId) return
+        lyricsJob?.cancel()
+        lyricsVid = t.videoId
+        lyrics = null
+        lyricsError = false
+        lyricsLoading = true
+        val sec = (durationMs / 1000).toInt()
+        lyricsJob = viewModelScope.launch {
+            val r = withContext(Dispatchers.IO) {
+                runCatching { LrcLib.load(a, t, sec) }
+            }
+            if (lyricsVid != t.videoId) return@launch
+            lyricsLoading = false
+            if (r.isSuccess) lyrics = r.getOrNull() else lyricsError = true
+        }
     }
 
     fun cycleRepeat() { repeat = (repeat + 1) % 3 }
