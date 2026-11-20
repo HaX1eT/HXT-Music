@@ -7,6 +7,7 @@ import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontVariation
 import androidx.compose.ui.text.font.FontWeight
+import androidx.core.content.res.ResourcesCompat
 
 /** Палитра 1-в-1 с :root в index.html */
 object Col {
@@ -25,32 +26,46 @@ object Col {
 val Ease = CubicBezierEasing(.2f, .8f, .2f, 1f)
 
 /**
- * Unbounded (заголовки) и Manrope (текст). Файлы скачиваются в CI в res/font/.
- * Если их нет — используется системный шрифт, приложение всё равно работает.
+ * Unbounded (заголовки) и Manrope (текст). Файлы скачиваются в CI в res/font/ (или лежат в репозитории).
+ * Перед использованием каждый шрифт проверяется: файл должен существовать и реально читаться системой.
+ * Иначе Compose упал бы при первой отрисовке, а так — тихий откат на системный шрифт.
  */
 object Fonts {
     var display: FontFamily = FontFamily.Default
     var body: FontFamily = FontFamily.Default
     var lyrics: FontFamily = FontFamily.Default
 
+    /** true — шрифт текстов песен (Manrope) найден и успешно загружен. */
+    var lyricsLoaded = false
+        private set
+
+    private var inited = false
+
+    /** id ресурса res/font/<name>, если файл есть и открывается; иначе 0. */
+    private fun usable(ctx: Context, name: String): Int {
+        val id = ctx.resources.getIdentifier(name, "font", ctx.packageName)
+        if (id == 0) { Dbg.log("шрифт $name: файла нет в res/font"); return 0 }
+        val ok = runCatching { ResourcesCompat.getFont(ctx, id) != null }.getOrDefault(false)
+        if (!ok) Dbg.log("шрифт $name: файл повреждён или не читается")
+        return if (ok) id else 0
+    }
+
+    private fun family(res: Int, weights: List<Int>) = FontFamily(weights.map { w ->
+        Font(res, FontWeight(w), variationSettings = FontVariation.Settings(FontVariation.weight(w)))
+    })
+
     fun init(ctx: Context) {
-        val d = ctx.resources.getIdentifier("unbounded", "font", ctx.packageName)
-        val b = ctx.resources.getIdentifier("manrope", "font", ctx.packageName)
-        runCatching {
-            if (d != 0) display = FontFamily(listOf(600, 800).map { w ->
-                Font(d, FontWeight(w), variationSettings = FontVariation.Settings(FontVariation.weight(w)))
-            })
+        if (inited) return
+        inited = true
+        val d = usable(ctx, "unbounded")
+        val b = usable(ctx, "manrope")
+        if (d != 0) runCatching { display = family(d, listOf(600, 800)) }
+        if (b != 0) runCatching { body = family(b, listOf(400, 500, 700)) }
+        // шрифт текстов песен: Manrope, самые насыщенные начертания (800 — максимум у этого шрифта)
+        if (b != 0) runCatching {
+            lyrics = family(b, listOf(700, 800))
+            lyricsLoaded = true
         }
-        runCatching {
-            if (b != 0) body = FontFamily(listOf(400, 500, 700).map { w ->
-                Font(b, FontWeight(w), variationSettings = FontVariation.Settings(FontVariation.weight(w)))
-            })
-        }
-        // шрифт текстов песен: Manrope, насыщенные начертания
-        runCatching {
-            if (b != 0) lyrics = FontFamily(listOf(700, 800).map { w ->
-                Font(b, FontWeight(w), variationSettings = FontVariation.Settings(FontVariation.weight(w)))
-            })
-        }
+        Dbg.log("шрифты: unbounded=${d != 0}, manrope=${b != 0}")
     }
 }
