@@ -54,18 +54,41 @@ object Fonts {
         Font(res, FontWeight(w), variationSettings = FontVariation.Settings(FontVariation.weight(w)))
     })
 
+    /**
+     * Manrope из обычных (статических) файлов manrope_regular/medium/bold/extrabold.ttf — их CI нарезает
+     * из вариативного шрифта. В отличие от оси wght, статическое начертание рисуется одинаково везде.
+     */
+    private fun manropeStatic(ctx: Context): FontFamily? {
+        val parts = listOf(400 to "manrope_regular", 500 to "manrope_medium", 700 to "manrope_bold", 800 to "manrope_extrabold")
+        val fonts = parts.map { (w, name) ->
+            val id = usable(ctx, name)
+            if (id == 0) return null
+            Font(id, FontWeight(w))
+        }
+        return FontFamily(fonts)
+    }
+
     fun init(ctx: Context) {
         if (inited) return
         inited = true
         val d = usable(ctx, "unbounded")
         val b = usable(ctx, "manrope")
         if (d != 0) runCatching { display = family(d, listOf(600, 800)) }
-        if (b != 0) runCatching { body = family(b, listOf(400, 500, 700)) }
-        // шрифт текстов песен: Manrope, самые насыщенные начертания (800 — максимум у этого шрифта)
-        if (b != 0) runCatching {
-            lyrics = family(b, listOf(700, 800))
+
+        val st = runCatching { manropeStatic(ctx) }.getOrNull()
+        if (st != null) {
+            // основной путь: статические начертания
+            body = st
+            lyrics = st
             lyricsLoaded = true
+        } else if (b != 0) {
+            // запасной путь: вариативный шрифт (вес может не применяться на части устройств)
+            runCatching {
+                body = family(b, listOf(400, 500, 700))
+                lyrics = family(b, listOf(700, 800))
+                lyricsLoaded = true
+            }
         }
-        Dbg.log("шрифты: unbounded=${d != 0}, manrope=${b != 0}")
+        Dbg.log("шрифты: unbounded=${d != 0}, manrope=${b != 0}, manrope-статика=${st != null}")
     }
 }
