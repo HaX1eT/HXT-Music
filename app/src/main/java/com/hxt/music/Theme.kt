@@ -31,6 +31,7 @@ val Ease = CubicBezierEasing(.2f, .8f, .2f, 1f)
 object Fonts {
     var display: FontFamily = FontFamily.Default
     var body: FontFamily = FontFamily.Default
+    var lyrics: FontFamily = FontFamily.Default
 
     fun init(ctx: Context) {
         val d = ctx.resources.getIdentifier("unbounded", "font", ctx.packageName)
@@ -42,6 +43,12 @@ object Fonts {
         }
         runCatching {
             if (b != 0) body = FontFamily(listOf(400, 500, 700).map { w ->
+                Font(b, FontWeight(w), variationSettings = FontVariation.Settings(FontVariation.weight(w)))
+            })
+        }
+        // шрифт текстов песен: Manrope, насыщенные начертания
+        runCatching {
+            if (b != 0) lyrics = FontFamily(listOf(700, 800).map { w ->
                 Font(b, FontWeight(w), variationSettings = FontVariation.Settings(FontVariation.weight(w)))
             })
         }
