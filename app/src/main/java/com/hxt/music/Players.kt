@@ -38,8 +38,12 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 
@@ -147,26 +151,17 @@ fun FullPlayer(vm: MusicVM, visible: Boolean, onClose: () -> Unit) {
                 // загружаем текст, когда он открыт и трек сменился
                 val lyricsOn = vm.showLyrics && t != null
                 LaunchedEffect(t?.videoId, lyricsOn) { if (lyricsOn && t != null) vm.loadLyrics(t) }
+                // Карточка текста стоит ровно на месте обложки и имеет тот же размер (rememberArtSize)
                 Crossfade(lyricsOn, Modifier.weight(1f).fillMaxWidth(), animationSpec = tween(400), label = "lyr") { lyr ->
-                    if (lyr && t != null) {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         Column(
-                            Modifier.fillMaxSize().padding(top = 6.dp),
+                            Modifier.verticalScroll(rememberScrollState()),
                             horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(18.dp),
+                            verticalArrangement = Arrangement.spacedBy(28.dp),
                         ) {
-                            LyricsCard(vm, t, model, Modifier.weight(1f).widthIn(max = 520.dp).fillMaxWidth().heightIn(min = 160.dp))
+                            if (lyr && t != null) LyricsCard(vm, t, model, Modifier.size(rememberArtSize()))
+                            else Art(vm, t, model)
                             Info(vm, t)
-                        }
-                    } else {
-                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                            Column(
-                                Modifier.verticalScroll(rememberScrollState()),
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                verticalArrangement = Arrangement.spacedBy(28.dp),
-                            ) {
-                                Art(vm, t, model)
-                                Info(vm, t)
-                            }
                         }
                     }
                 }
@@ -175,10 +170,16 @@ fun FullPlayer(vm: MusicVM, visible: Boolean, onClose: () -> Unit) {
     }
 }
 
+/** Сторона квадратной обложки. Её же использует карточка текста, чтобы размеры совпадали абсолютно. */
+@Composable
+private fun rememberArtSize(): Dp {
+    val cfg = LocalConfiguration.current
+    return minOf(cfg.screenWidthDp * .84f, cfg.screenHeightDp * .38f, 440f).dp
+}
+
 @Composable
 private fun Art(vm: MusicVM, t: Track?, model: Any?) {
-    val cfg = LocalConfiguration.current
-    val artSize = minOf(cfg.screenWidthDp * .84f, cfg.screenHeightDp * .38f, 440f).dp
+    val artSize = rememberArtSize()
     val tx by animateFloatAsState(if (vm.isPlaying) 16f else 14f, tween(900, easing = Ease), label = "tx")
     val rot by animateFloatAsState(if (vm.isPlaying) 0f else 2.5f, tween(900, easing = Ease), label = "rot")
     val vid = t?.videoId
@@ -318,7 +319,11 @@ private fun LyricsMessage(title: String, sub: String, onClick: (() -> Unit)? = n
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
-        Text(title, color = Col.Text, fontSize = 22.sp, fontFamily = Fonts.lyrics, fontWeight = FontWeight.ExtraBold, textAlign = TextAlign.Center)
+        ThickText(
+            title,
+            TextStyle(color = Col.Text, fontSize = 22.sp, fontFamily = Fonts.lyrics, fontWeight = FontWeight.ExtraBold, textAlign = TextAlign.Center),
+            Modifier.fillMaxWidth(), thickness = LYRIC_THICKEN,
+        )
         Spacer(Modifier.height(8.dp))
         Text(sub, color = Col.Muted, fontSize = 14.sp, fontFamily = Fonts.body, textAlign = TextAlign.Center)
     }
@@ -334,6 +339,22 @@ private fun Modifier.fadeEdges(): Modifier = this
             blendMode = BlendMode.DstIn,
         )
     }
+
+/** Дополнительное утолщение букв (dp): страхует, если Manrope не загрузился и взят системный шрифт. */
+private val LYRIC_THICKEN = .5.dp
+
+/** Текст с утолщением: поверх заливки рисуется обводка того же цвета (свечение — только у заливки). */
+@Composable
+private fun ThickText(text: String, style: TextStyle, modifier: Modifier = Modifier, thickness: Dp = LYRIC_THICKEN) {
+    val px = with(LocalDensity.current) { thickness.toPx() }
+    Box(modifier) {
+        Text(text, Modifier.fillMaxWidth(), style = style)
+        Text(
+            text, Modifier.fillMaxWidth(),
+            style = style.copy(shadow = null, drawStyle = Stroke(width = px, join = StrokeJoin.Round)),
+        )
+    }
+}
 
 private fun activeLine(lines: List<LyricLine>, posMs: Long): Int {
     var lo = 0
@@ -404,17 +425,8 @@ private fun LyricRow(text: String, rel: Int, onClick: () -> Unit) {
     val a by animateFloatAsState(if (isActive) 1f else 0f, tween(450, easing = Ease), label = "la")
     val rest = (.5f - .07f * (kotlin.math.abs(rel) - 1).coerceAtLeast(0)).coerceAtLeast(.2f)
     val alpha by animateFloatAsState(if (isActive) 1f else rest, tween(450, easing = Ease), label = "lal")
-    Text(
+    ThickText(
         text,
-        modifier = Modifier.fillMaxWidth()
-            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onClick)
-            .padding(vertical = 10.dp)
-            .graphicsLayer {
-                val sc = .86f + .14f * a
-                scaleX = sc; scaleY = sc
-                this.alpha = alpha
-                transformOrigin = TransformOrigin.Center
-            },
         style = TextStyle(
             color = Col.Text,
             fontFamily = Fonts.lyrics,
@@ -425,6 +437,16 @@ private fun LyricRow(text: String, rel: Int, onClick: () -> Unit) {
             textAlign = TextAlign.Center,
             shadow = Shadow(Col.RedHi.copy(alpha = .55f * a), blurRadius = 28f),
         ),
+        modifier = Modifier.fillMaxWidth()
+            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onClick)
+            .padding(vertical = 10.dp)
+            .graphicsLayer {
+                val sc = .86f + .14f * a
+                scaleX = sc; scaleY = sc
+                this.alpha = alpha
+                transformOrigin = TransformOrigin.Center
+            },
+        thickness = .7.dp,
     )
 }
 
@@ -436,17 +458,18 @@ private fun PlainLyrics(ly: Lyrics) {
     ) {
         ly.lines.forEach { l ->
             if (l.text.isEmpty()) Spacer(Modifier.height(18.dp))
-            else Text(
+            else ThickText(
                 l.text,
                 modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
                 style = TextStyle(
                     color = Col.Text.copy(alpha = .92f),
                     fontFamily = Fonts.lyrics,
-                    fontWeight = FontWeight.Bold,
+                    fontWeight = FontWeight.ExtraBold,
                     fontSize = 20.sp,
                     lineHeight = 28.sp,
                     textAlign = TextAlign.Center,
                 ),
+                thickness = .5.dp,
             )
         }
         Spacer(Modifier.height(22.dp))
