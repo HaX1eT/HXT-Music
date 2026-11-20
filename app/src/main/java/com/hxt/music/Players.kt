@@ -3,6 +3,20 @@ package com.hxt.music
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.animateScrollBy
+import androidx.compose.foundation.interaction.DragInteraction
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.Shadow
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.sp
+import androidx.compose.material3.Text
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -129,14 +143,30 @@ fun FullPlayer(vm: MusicVM, visible: Boolean, onClose: () -> Unit) {
                     Logo(15, muted = true)
                     Spacer(Modifier.width(38.dp))
                 }
-                Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                    Column(
-                        Modifier.verticalScroll(rememberScrollState()),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(28.dp),
-                    ) {
-                        Art(vm, t, model)
-                        Info(vm, t)
+                // загружаем текст, когда он открыт и трек сменился
+                val lyricsOn = vm.showLyrics && t != null
+                LaunchedEffect(t?.videoId, lyricsOn) { if (lyricsOn && t != null) vm.loadLyrics(t) }
+                Crossfade(lyricsOn, Modifier.weight(1f).fillMaxWidth(), animationSpec = tween(400), label = "lyr") { lyr ->
+                    if (lyr && t != null) {
+                        Column(
+                            Modifier.fillMaxSize().padding(top = 6.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(18.dp),
+                        ) {
+                            LyricsCard(vm, t, model, Modifier.weight(1f).widthIn(max = 520.dp).fillMaxWidth().heightIn(min = 160.dp))
+                            Info(vm, t)
+                        }
+                    } else {
+                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Column(
+                                Modifier.verticalScroll(rememberScrollState()),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(28.dp),
+                            ) {
+                                Art(vm, t, model)
+                                Info(vm, t)
+                            }
+                        }
                     }
                 }
             }
@@ -205,8 +235,7 @@ private fun Info(vm: MusicVM, t: Track?) {
                 Modifier.weight(1f), listOf("Повтор", "Повтор: всё", "Повтор: 1")[vm.repeat],
                 Ic.REPEAT, on = vm.repeat > 0, onClick = { vm.cycleRepeat() },
             )
-            // «Текст» — заглушка, как в веб-версии: выглядит так же, но не нажимается
-            Pill(Modifier.weight(1f), "Текст", Ic.LYRICS, stub = true)
+            Pill(Modifier.weight(1f), "Текст", Ic.LYRICS, on = vm.showLyrics, onClick = { vm.toggleLyrics() })
             Pill(Modifier.weight(1f), "Микс", Ic.SHUFFLE, on = vm.shuffle, onClick = { vm.toggleShuffle() })
         }
     }
@@ -235,5 +264,183 @@ private fun Pill(
         Svg(icon, 18.dp, fg, stroke = 2f)
         Spacer(Modifier.width(8.dp))
         T(text, 12, FontWeight.Bold, fg)
+    }
+}
+
+
+// ---------- текст песни ----------
+
+/** Карточка вместо обложки: обложка размывается и затемняется, поверх — центрированный текст. */
+@Composable
+private fun LyricsCard(vm: MusicVM, t: Track, model: Any?, modifier: Modifier) {
+    val shape = RoundedCornerShape(26.dp)
+    var entered by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { entered = true }
+    val blurR by animateDpAsState(if (entered) 28.dp else 0.dp, tween(800, easing = Ease), label = "lblur")
+    val dim by animateFloatAsState(if (entered) 1f else 0f, tween(800, easing = Ease), label = "ldim")
+
+    Box(modifier.clip(shape).background(Col.Card).border(1.dp, Col.Line, shape)) {
+        Crossfade(model, animationSpec = tween(700), label = "lcover") { m ->
+            if (m != null) AsyncImage(
+                m, null,
+                Modifier.fillMaxSize().scale(1.2f).blur(blurR),
+                contentScale = ContentScale.Crop,
+            )
+        }
+        Box(
+            Modifier.fillMaxSize().background(
+                Brush.verticalGradient(
+                    0f to Col.Bg.copy(alpha = .55f * dim),
+                    .5f to Col.Bg.copy(alpha = .62f * dim),
+                    1f to Col.Bg.copy(alpha = .78f * dim),
+                ),
+            ),
+        )
+        val ly = vm.lyrics
+        when {
+            vm.lyricsLoading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Spinner(26.dp) }
+            vm.lyricsError -> LyricsMessage("Не удалось загрузить текст", "Нажмите, чтобы повторить") { vm.loadLyrics(t, force = true) }
+            ly == null -> LyricsMessage("Текст не найден", "Для этого трека на lrclib его нет")
+            ly.instrumental -> LyricsMessage("♪", "Инструментальный трек")
+            ly.synced -> SyncedLyrics(vm, ly)
+            else -> PlainLyrics(ly)
+        }
+    }
+}
+
+@Composable
+private fun LyricsMessage(title: String, sub: String, onClick: (() -> Unit)? = null) {
+    Column(
+        Modifier.fillMaxSize().then(
+            if (onClick != null) Modifier.clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onClick() } else Modifier,
+        ).padding(24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Text(title, color = Col.Text, fontSize = 22.sp, fontFamily = Fonts.lyrics, fontWeight = FontWeight.ExtraBold, textAlign = TextAlign.Center)
+        Spacer(Modifier.height(8.dp))
+        Text(sub, color = Col.Muted, fontSize = 14.sp, fontFamily = Fonts.body, textAlign = TextAlign.Center)
+    }
+}
+
+/** Плавное затухание текста у верхнего и нижнего края карточки. */
+private fun Modifier.fadeEdges(): Modifier = this
+    .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+    .drawWithContent {
+        drawContent()
+        drawRect(
+            Brush.verticalGradient(0f to Color.Transparent, .1f to Color.Black, .9f to Color.Black, 1f to Color.Transparent),
+            blendMode = BlendMode.DstIn,
+        )
+    }
+
+private fun activeLine(lines: List<LyricLine>, posMs: Long): Int {
+    var lo = 0
+    var hi = lines.lastIndex
+    var res = -1
+    while (lo <= hi) {
+        val mid = (lo + hi) ushr 1
+        if (lines[mid].timeMs <= posMs) { res = mid; lo = mid + 1 } else hi = mid - 1
+    }
+    return res
+}
+
+@Composable
+private fun SyncedLyrics(vm: MusicVM, ly: Lyrics) {
+    val lines = ly.lines
+    val state = rememberLazyListState()
+    // +300 мс: позиция плеера обновляется раз в 250 мс, строка должна загораться чуть заранее
+    val active by remember(ly) { derivedStateOf { activeLine(lines, vm.positionMs + 300) } }
+
+    // пока пользователь листает сам — автоскролл не мешает
+    var pauseUntil by remember { mutableLongStateOf(0L) }
+    LaunchedEffect(state) {
+        state.interactionSource.interactions.collect {
+            when (it) {
+                is DragInteraction.Start -> pauseUntil = Long.MAX_VALUE
+                is DragInteraction.Stop, is DragInteraction.Cancel -> pauseUntil = System.currentTimeMillis() + 3500
+            }
+        }
+    }
+
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val pad = maxHeight / 2
+        LaunchedEffect(active, pauseUntil) {
+            val wait = pauseUntil - System.currentTimeMillis()
+            if (wait > 0) { if (pauseUntil == Long.MAX_VALUE) return@LaunchedEffect else kotlinx.coroutines.delay(wait) }
+            val i = active.coerceAtLeast(0)
+            val info = state.layoutInfo.visibleItemsInfo.firstOrNull { it.index == i }
+            if (info != null) {
+                val center = state.layoutInfo.viewportSize.height / 2f
+                state.animateScrollBy(info.offset + info.size / 2f - center, tween(550, easing = Ease))
+            } else {
+                state.animateScrollToItem(i)
+            }
+        }
+        LazyColumn(
+            state = state,
+            modifier = Modifier.fillMaxSize().fadeEdges(),
+            contentPadding = PaddingValues(start = 22.dp, end = 22.dp, top = pad, bottom = pad),
+        ) {
+            itemsIndexed(lines, key = { i, l -> "$i-${l.timeMs}" }) { i, l ->
+                LyricRow(l.text, i - active) { vm.seekMs(l.timeMs) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun LyricRow(text: String, rel: Int, onClick: () -> Unit) {
+    val isActive = rel == 0
+    val a by animateFloatAsState(if (isActive) 1f else 0f, tween(450, easing = Ease), label = "la")
+    val rest = (.5f - .07f * (kotlin.math.abs(rel) - 1).coerceAtLeast(0)).coerceAtLeast(.2f)
+    val alpha by animateFloatAsState(if (isActive) 1f else rest, tween(450, easing = Ease), label = "lal")
+    Text(
+        text,
+        modifier = Modifier.fillMaxWidth()
+            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onClick)
+            .padding(vertical = 10.dp)
+            .graphicsLayer {
+                val sc = .86f + .14f * a
+                scaleX = sc; scaleY = sc
+                this.alpha = alpha
+                transformOrigin = TransformOrigin.Center
+            },
+        style = TextStyle(
+            color = Col.Text,
+            fontFamily = Fonts.lyrics,
+            fontWeight = FontWeight.ExtraBold,
+            fontSize = 27.sp,
+            lineHeight = 34.sp,
+            letterSpacing = (-.3).sp,
+            textAlign = TextAlign.Center,
+            shadow = Shadow(Col.RedHi.copy(alpha = .55f * a), blurRadius = 28f),
+        ),
+    )
+}
+
+@Composable
+private fun PlainLyrics(ly: Lyrics) {
+    Column(
+        Modifier.fillMaxSize().fadeEdges().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp, vertical = 28.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        ly.lines.forEach { l ->
+            if (l.text.isEmpty()) Spacer(Modifier.height(18.dp))
+            else Text(
+                l.text,
+                modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
+                style = TextStyle(
+                    color = Col.Text.copy(alpha = .92f),
+                    fontFamily = Fonts.lyrics,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 20.sp,
+                    lineHeight = 28.sp,
+                    textAlign = TextAlign.Center,
+                ),
+            )
+        }
+        Spacer(Modifier.height(22.dp))
+        Text("Текст без синхронизации", color = Col.Muted, fontSize = 12.sp, fontFamily = Fonts.body)
     }
 }
