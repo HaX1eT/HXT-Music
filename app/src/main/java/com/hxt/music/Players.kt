@@ -17,6 +17,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.sp
 import androidx.compose.material3.Text
+import kotlin.math.abs
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -369,13 +370,21 @@ private fun SyncedLyrics(vm: MusicVM, ly: Lyrics) {
             val wait = pauseUntil - System.currentTimeMillis()
             if (wait > 0) { if (pauseUntil == Long.MAX_VALUE) return@LaunchedEffect else kotlinx.coroutines.delay(wait) }
             val i = active.coerceAtLeast(0)
-            val info = state.layoutInfo.visibleItemsInfo.firstOrNull { it.index == i }
-            if (info != null) {
-                val center = state.layoutInfo.viewportSize.height / 2f
-                state.animateScrollBy(info.offset + info.size / 2f - center, tween(550, easing = Ease))
-            } else {
-                state.animateScrollToItem(i)
+            fun centerDelta(): Float? {
+                val li = state.layoutInfo
+                val info = li.visibleItemsInfo.firstOrNull { it.index == i } ?: return null
+                // центр видимой области в тех же координатах, что и offset элементов (учитывает contentPadding)
+                val center = (li.viewportStartOffset + li.viewportEndOffset) / 2f
+                return info.offset + info.size / 2f - center
             }
+            var d = centerDelta()
+            if (d == null) {
+                // строка далеко и ещё не скомпонована — прыгаем к ней и после раскладки доводим до центра
+                state.scrollToItem(i)
+                androidx.compose.runtime.withFrameNanos { }
+                d = centerDelta()
+            }
+            if (d != null && abs(d) > 1f) state.animateScrollBy(d, tween(500, easing = Ease))
         }
         LazyColumn(
             state = state,
