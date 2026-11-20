@@ -433,7 +433,6 @@ private fun LyricRow(text: String, rel: Int, onClick: () -> Unit) {
             fontWeight = FontWeight.ExtraBold,
             fontSize = 27.sp,
             lineHeight = 34.sp,
-            letterSpacing = (-.3).sp,
             textAlign = TextAlign.Center,
             shadow = Shadow(Col.RedHi.copy(alpha = .55f * a), blurRadius = 28f),
         ),
