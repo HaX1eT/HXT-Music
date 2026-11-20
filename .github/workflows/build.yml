@@ -35,14 +35,52 @@ jobs:
         with:
           gradle-version: "8.9"
 
-      # Шрифты дизайна (Unbounded + Manrope). Если не скачались — приложение соберётся с системным шрифтом.
+      # Шрифты дизайна (Unbounded + Manrope). Manrope нужен для текстов песен.
+      # Порядок: файл из репозитория (если лежит в app/src/main/res/font) → кеш → скачивание
+      # с трёх зеркал с повторами. Каждый файл проверяется (размер + сигнатура TTF).
+      # Если шрифт так и не получен — сборка падает, чтобы не выпустить APK с тонким системным шрифтом.
+      - name: Cache fonts
+        uses: actions/cache@v4
+        with:
+          path: app/src/main/res/font
+          key: hxt-fonts-v1
+
       - name: Download fonts
-        continue-on-error: true
         run: |
-          mkdir -p app/src/main/res/font
-          curl -fsSL -o app/src/main/res/font/unbounded.ttf "https://github.com/google/fonts/raw/main/ofl/unbounded/Unbounded%5Bwght%5D.ttf"
-          curl -fsSL -o app/src/main/res/font/manrope.ttf "https://github.com/google/fonts/raw/main/ofl/manrope/Manrope%5Bwght%5D.ttf"
-          ls -la app/src/main/res/font
+          dir=app/src/main/res/font
+          mkdir -p "$dir"
+
+          valid() {
+            [ -s "$1" ] || return 1
+            [ "$(stat -c %s "$1")" -gt 100000 ] || return 1
+            case "$(head -c 4 "$1" | od -An -tx1 | tr -d ' \n')" in
+              00010000|74727565) return 0 ;;   # сигнатуры TrueType
+              *) return 1 ;;
+            esac
+          }
+
+          fetch() {   # fetch <имя> <путь внутри google/fonts/ofl>
+            local out="$dir/$1.ttf" rel="$2"
+            if valid "$out"; then echo "$1: уже есть ($(stat -c %s "$out") байт)"; return 0; fi
+            rm -f "$out"
+            for url in \
+              "https://github.com/google/fonts/raw/main/ofl/$rel" \
+              "https://raw.githubusercontent.com/google/fonts/main/ofl/$rel" \
+              "https://cdn.jsdelivr.net/gh/google/fonts@main/ofl/$rel"; do
+              echo "$1: $url"
+              if curl -fsSL --retry 4 --retry-delay 3 --retry-all-errors \
+                   --connect-timeout 15 --max-time 120 -o "$out.tmp" "$url" && valid "$out.tmp"; then
+                mv "$out.tmp" "$out"; echo "$1: скачан"; return 0
+              fi
+              rm -f "$out.tmp"
+            done
+            echo "::error::Не удалось получить шрифт $1 ни с одного зеркала"
+            return 1
+          }
+
+          fetch manrope   'manrope/Manrope%5Bwght%5D.ttf'
+          fetch unbounded 'unbounded/Unbounded%5Bwght%5D.ttf'
+          ls -la "$dir"
 
       # Своя подпись — необязательна. Без секретов APK подписывается debug-ключом.
       - name: Prepare signing
