@@ -43,16 +43,16 @@ jobs:
         uses: actions/cache@v4
         with:
           path: app/src/main/res/font
-          key: hxt-fonts-v1
+          key: hxt-fonts-v2
 
       - name: Download fonts
         run: |
           dir=app/src/main/res/font
           mkdir -p "$dir"
 
-          valid() {
+          valid() {   # valid <файл> [мин. размер в байтах]
             [ -s "$1" ] || return 1
-            [ "$(stat -c %s "$1")" -gt 100000 ] || return 1
+            [ "$(stat -c %s "$1")" -gt "${2:-100000}" ] || return 1
             case "$(head -c 4 "$1" | od -An -tx1 | tr -d ' \n')" in
               00010000|74727565) return 0 ;;   # сигнатуры TrueType
               *) return 1 ;;
@@ -80,6 +80,21 @@ jobs:
 
           fetch manrope   'manrope/Manrope%5Bwght%5D.ttf'
           fetch unbounded 'unbounded/Unbounded%5Bwght%5D.ttf'
+
+          # Статические начертания Manrope (вариативная ось wght на части устройств не применяется,
+          # из-за этого текст выглядит тонким). Нарезаем из скачанного файла.
+          make_static() {   # make_static <суффикс> <вес>
+            local out="$dir/manrope_$1.ttf"
+            if valid "$out" 20000; then echo "manrope_$1: уже есть"; return 0; fi
+            python3 -m fontTools.varLib.instancer "$dir/manrope.ttf" "wght=$2" -o "$out" || return 1
+            valid "$out" 20000 || { echo "::error::manrope_$1.ttf получился некорректным"; return 1; }
+            echo "manrope_$1: создан"
+          }
+          if ! python3 -c "import fontTools" 2>/dev/null; then python3 -m pip install --quiet fonttools; fi
+          make_static regular   400
+          make_static medium    500
+          make_static bold      700
+          make_static extrabold 800
           ls -la "$dir"
 
       # Своя подпись — необязательна. Без секретов APK подписывается debug-ключом.
