@@ -1,5 +1,7 @@
 package com.hxt.music
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
@@ -14,6 +16,7 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -159,7 +162,7 @@ private fun LikedBox(vm: MusicVM, dock: Dp) {
             T("Liked", 17, FontWeight.SemiBold, display = true)
             Spacer(Modifier.width(10.dp))
             val cnt = when {
-                vm.editing -> "Перетащите, чтобы изменить порядок"
+                vm.editing -> "Порядок — перетаскиванием, ♪ — своя дорожка"
                 list.isNotEmpty() -> "${list.size} треков"
                 else -> ""
             }
@@ -203,6 +206,15 @@ private fun LikedList(vm: MusicVM, dock: Dp) {
     val seen = remember { mutableSetOf<String>() }
     val curId = vm.current?.videoId
 
+    // выбор аудиофайла из памяти телефона для замены дорожки (id трека переживает пересоздание активности)
+    var swapVid by rememberSaveable { mutableStateOf<String?>(null) }
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        val vid = swapVid
+        swapVid = null
+        val target = vm.liked.firstOrNull { it.videoId == vid }
+        if (uri != null && target != null) vm.replaceAudio(target, uri)
+    }
+
     LazyColumn(
         state = lazy,
         modifier = Modifier.fillMaxSize(),
@@ -224,6 +236,8 @@ private fun LikedList(vm: MusicVM, dock: Dp) {
                     dragging = dragging,
                     onClick = if (vm.editing) null else ({ vm.play(vm.liked, i) }),
                     onLike = { vm.toggleLike(t) },
+                    showSwap = vm.editing,
+                    onSwap = { swapVid = t.videoId; picker.launch(arrayOf("audio/*", "application/ogg")) },
                 )
             }
         }

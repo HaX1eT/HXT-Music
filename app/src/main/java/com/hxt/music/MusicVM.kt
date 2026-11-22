@@ -116,9 +116,15 @@ class MusicVM(app: Application) : AndroidViewModel(app) {
         return t.thumb.ifBlank { null }
     }
 
-    private fun patch(vid: String, isLiked: Boolean? = null, isDownloaded: Boolean? = null) {
+    private fun patch(
+        vid: String, isLiked: Boolean? = null, isDownloaded: Boolean? = null,
+        isCustom: Boolean? = null, newDuration: String? = null,
+    ) {
         val f = { t: Track ->
-            if (t.videoId == vid) t.copy(liked = isLiked ?: t.liked, downloaded = isDownloaded ?: t.downloaded) else t
+            if (t.videoId == vid) t.copy(
+                liked = isLiked ?: t.liked, downloaded = isDownloaded ?: t.downloaded,
+                custom = isCustom ?: t.custom, duration = newDuration ?: t.duration,
+            ) else t
         }
         results = results.map(f)
         liked = liked.map(f)
@@ -128,10 +134,45 @@ class MusicVM(app: Application) : AndroidViewModel(app) {
     /** Восстановление/обновление backup Liked; вызывается при возврате в приложение. */
     fun syncBackup() {
         viewModelScope.launch {
-            val n = withContext(Dispatchers.IO) { lib.syncBackup() }
-            if (n > 0) {
+            val (n, c) = withContext(Dispatchers.IO) { lib.syncBackup() to (lib.syncCustom()?.first ?: 0) }
+            if (n > 0 || c > 0) {
                 refreshLiked()
-                toast("Восстановлено треков в Liked: $n")
+                val parts = listOfNotNull(
+                    if (n > 0) "треков в Liked: $n" else null,
+                    if (c > 0) "своих дорожек: $c" else null,
+                )
+                toast("Восстановлено — " + parts.joinToString(", "))
+            }
+        }
+    }
+
+    /** Кнопка «Бэкап своих треков»: восстанавливает недостающие дорожки из копии и дописывает локальные в копию. */
+    fun mergeCustomBackup() {
+        viewModelScope.launch {
+            val r = withContext(Dispatchers.IO) { lib.syncCustom() }
+            if (r == null) { toast("Нет доступа к файлам"); return@launch }
+            refreshLiked()
+            toast(
+                when {
+                    r.second == 0 -> "Своих дорожек пока нет"
+                    r.first > 0 -> "Свои треки: восстановлено ${r.first}, всего ${r.second}"
+                    else -> "Бэкап своих треков обновлён, всего ${r.second}"
+                },
+            )
+        }
+    }
+
+    /** Liked → режим редактирования → ♪: заменяет звуковую дорожку файлом из памяти телефона. */
+    fun replaceAudio(t: Track, uri: Uri) {
+        viewModelScope.launch {
+            try {
+                toast("Загружаю дорожку…")
+                val dur = lib.setCustomAudio(t, uri)
+                patch(t.videoId, isDownloaded = true, isCustom = true, newDuration = dur)
+                toast("Дорожка заменена: ${t.title}")
+                if (current?.videoId == t.videoId) startCurrent()   // играет сейчас — перезапускаем с новой дорожкой
+            } catch (e: Exception) {
+                toast("Не удалось заменить: " + (e.message ?: "ошибка").take(80))
             }
         }
     }

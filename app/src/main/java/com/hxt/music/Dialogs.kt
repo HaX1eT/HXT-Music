@@ -30,7 +30,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 
 @Composable
-fun ImportDialog(vm: MusicVM, onBackup: () -> Unit, onDismiss: () -> Unit) {
+fun ImportDialog(vm: MusicVM, onBackup: () -> Unit, onBackupCustom: () -> Unit, onDismiss: () -> Unit) {
     var text by remember { mutableStateOf("") }
     val frac by animateFloatAsState(
         if (vm.importTotal > 0) vm.importDone.toFloat() / vm.importTotal else 0f,
@@ -101,6 +101,13 @@ fun ImportDialog(vm: MusicVM, onBackup: () -> Unit, onDismiss: () -> Unit) {
                 Box(
                     Modifier.fillMaxWidth().height(40.dp).clip(RoundedCornerShape(12.dp)).background(Col.Card)
                         .border(1.dp, Col.Line, RoundedCornerShape(12.dp))
+                        .pressable(scaleDown = .97f) { onBackupCustom(); onDismiss() },
+                    contentAlignment = Alignment.Center,
+                ) { T("Бэкап своих треков", 13, FontWeight.SemiBold) }
+                Spacer(Modifier.height(8.dp))
+                Box(
+                    Modifier.fillMaxWidth().height(40.dp).clip(RoundedCornerShape(12.dp)).background(Col.Card)
+                        .border(1.dp, Col.Line, RoundedCornerShape(12.dp))
                         .pressable(scaleDown = .97f) {
                             clipboard.setText(AnnotatedString(Dbg.dump().ifBlank { "(лог пуст)" }))
                             vm.toast("Лог скопирован")
@@ -150,8 +157,10 @@ fun BackupDialog(onAllow: () -> Unit, onLater: () -> Unit) {
                 T(
                     "Список Liked (только названия, без аудио) будет копироваться в файл HXT Music/liked.json во внутренней памяти. " +
                         "После удаления и новой установки треки вернутся в Liked, а скачаются при первом воспроизведении. " +
+                        "Свои звуковые дорожки (загруженные вами вместо оригинала) копируются целиком в HXT Music/custom " +
+                        "вместе с файлом custom.json и после переустановки снова привязываются к своим трекам. " +
                         "Нужен доступ к файлам.",
-                    14, color = Col.Muted, maxLines = 8,
+                    14, color = Col.Muted, maxLines = 12,
                 )
                 Spacer(Modifier.height(18.dp))
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.End)) {

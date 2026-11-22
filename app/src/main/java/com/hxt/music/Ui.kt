@@ -304,6 +304,8 @@ fun TrackRow(
     dragging: Boolean,
     onClick: (() -> Unit)?,
     onLike: () -> Unit,
+    showSwap: Boolean = false,
+    onSwap: (() -> Unit)? = null,
 ) {
     val shape = RoundedCornerShape(14.dp)
     val a = remember { Animatable(if (animateIn) 0f else 1f) }
@@ -328,6 +330,7 @@ fun TrackRow(
         else -> Brush.horizontalGradient(listOf(Color.Transparent, Color.Transparent))
     }
     val handleW by animateDpAsState(if (showHandle) 38.dp else 0.dp, tween(450, easing = Ease), label = "handleW")
+    val swapW by animateDpAsState(if (showSwap) 38.dp else 0.dp, tween(450, easing = Ease), label = "swapW")
     val wide = LocalConfiguration.current.screenWidthDp > 760
 
     Row(
@@ -352,7 +355,13 @@ fun TrackRow(
                 T(t.title, 15, FontWeight.Bold, modifier = Modifier.weight(1f, fill = false))
                 if (current) Eq(playingNow)
             }
-            T(t.artist, 13, FontWeight.Medium, Col.Muted)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                T(t.artist, 13, FontWeight.Medium, Col.Muted, modifier = Modifier.weight(1f, fill = false))
+                if (t.custom) {
+                    Spacer(Modifier.width(6.dp))
+                    Svg(Ic.MUSIC, 12.dp, Col.RedHi, stroke = 2.6f)
+                }
+            }
         }
         if (wide && t.duration.isNotEmpty()) {
             Spacer(Modifier.width(14.dp))
@@ -360,6 +369,13 @@ fun TrackRow(
         }
         Spacer(Modifier.width(14.dp))
         Heart(t.liked, onLike)
+        Box(
+            Modifier.width(swapW).height(38.dp).clip(RoundedCornerShape(11.dp))
+                .then(if (showSwap && onSwap != null) Modifier.pressable(onClick = onSwap) else Modifier),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (swapW > 8.dp) Svg(Ic.MUSIC, 19.dp, if (t.custom) Col.RedHi else Col.Muted, stroke = 2.2f)
+        }
         Box(
             Modifier.width(handleW).height(38.dp).clip(RoundedCornerShape(11.dp)).then(handle),
             contentAlignment = Alignment.Center,

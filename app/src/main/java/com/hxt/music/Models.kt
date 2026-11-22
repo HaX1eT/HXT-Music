@@ -8,6 +8,8 @@ data class Track(
     val thumb: String,
     val liked: Boolean = false,
     val downloaded: Boolean = false,
+    /** Звуковая дорожка заменена пользователем (файл из памяти телефона). */
+    val custom: Boolean = false,
 )
 
 enum class SearchState { Hint, Loading, Results, Empty, Error }

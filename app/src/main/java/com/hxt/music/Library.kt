@@ -1,6 +1,10 @@
 package com.hxt.music
 
 import android.content.Context
+import android.media.MediaMetadataRetriever
+import android.net.Uri
+import android.provider.OpenableColumns
+import android.webkit.MimeTypeMap
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -127,6 +131,7 @@ class Library(ctx: Context, private val client: OkHttpClient) {
         t.copy(
             liked = db[t.videoId]?.optBoolean("liked", false) ?: false,
             downloaded = audioFile(t.videoId) != null,
+            custom = db[t.videoId]?.optBoolean("custom", false) ?: false,
         )
     }
 
@@ -134,7 +139,8 @@ class Library(ctx: Context, private val client: OkHttpClient) {
     fun likedTracks(): List<Track> = synchronized(lock) {
         val items = db.entries.filter { it.value.optBoolean("liked", false) }.map { (k, v) ->
             Track(k, v.optString("title"), v.optString("artist"), v.optString("duration"),
-                v.optString("thumb"), liked = true, downloaded = audioFile(k) != null)
+                v.optString("thumb"), liked = true, downloaded = audioFile(k) != null,
+                custom = v.optBoolean("custom", false))
         }
         val pos = order.withIndex().associate { it.value to it.index }
         val fresh = items.filter { it.videoId !in pos }.reversed()
@@ -198,6 +204,153 @@ class Library(ctx: Context, private val client: OkHttpClient) {
             saveDb()
             writeBackup()
         }
+    }
+
+    // ---------- свои звуковые дорожки ----------
+
+    private val idOk = Regex("[A-Za-z0-9_-]{5,32}")
+
+    private fun deleteAudio(vid: String) {
+        audioDir.listFiles()?.filter { it.name.startsWith("$vid.") }?.forEach { it.delete() }
+    }
+
+    private fun copyAtomic(src: File, dst: File) {
+        val tmp = File(dst.path + ".tmp")
+        try {
+            src.inputStream().use { i -> tmp.outputStream().use { o -> i.copyTo(o) } }
+            dst.delete()
+            if (!tmp.renameTo(dst)) throw IOException("rename failed")
+        } finally {
+            tmp.delete()
+        }
+    }
+
+    private fun displayName(uri: Uri): String? = runCatching {
+        appCtx.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
+            if (c.moveToFirst()) c.getString(0) else null
+        }
+    }.getOrNull()
+
+    /** Длительность аудиофайла в мс; null — файл не читается как аудио. */
+    private fun probeDuration(f: File): Long? {
+        val r = MediaMetadataRetriever()
+        return try {
+            r.setDataSource(f.path)
+            r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()
+        } catch (e: Exception) {
+            null
+        } finally {
+            runCatching { r.release() }
+        }
+    }
+
+    /**
+     * Заменяет звуковую дорожку трека файлом из памяти телефона. Название, автор и обложка не меняются.
+     * Возвращает новую длительность («м:сс»). Копия сразу уходит в бэкап (если выдан доступ).
+     */
+    suspend fun setCustomAudio(t: Track, uri: Uri): String = withContext(Dispatchers.IO) {
+        val name = displayName(uri)
+        val ext = name?.substringAfterLast('.', "")?.lowercase()
+            ?.takeIf { Regex("[a-z0-9]{2,5}").matches(it) && it != "part" && it != "tmp" }
+            ?: MimeTypeMap.getSingleton().getExtensionFromMimeType(appCtx.contentResolver.getType(uri))
+            ?: "mp3"
+        val mu = dlLocks.getOrPut(t.videoId) { Mutex() }
+        val dur = mu.withLock {
+            val part = File(audioDir, "${t.videoId}.$ext.part")
+            val dest = File(audioDir, "${t.videoId}.$ext")
+            val d = try {
+                val input = appCtx.contentResolver.openInputStream(uri) ?: throw IOException("Не удалось открыть файл")
+                input.use { i -> part.outputStream().use { o -> i.copyTo(o) } }
+                if (part.length() == 0L) throw IOException("Пустой файл")
+                val ms = probeDuration(part)
+                if (ms == null || ms <= 0L) throw IOException("Файл не похож на аудио")
+                deleteAudio(t.videoId)
+                if (!part.renameTo(dest)) throw IOException("Не удалось сохранить файл")
+                fmtTime(ms)
+            } finally {
+                part.delete()
+            }
+            val cover = coverFile(t.videoId)
+            if (!cover.exists() && t.thumb.isNotBlank()) runCatching { cover.writeBytes(getBytes(t.thumb)) }
+            d
+        }
+        synchronized(lock) {
+            val e = db.getOrPut(t.videoId) {
+                JSONObject().put("title", t.title).put("artist", t.artist).put("thumb", t.thumb)
+            }
+            e.put("duration", dur).put("custom", true).put("customName", name ?: "")
+            saveDb()
+            writeBackup()
+            writeCustomBackup()
+        }
+        Dbg.log("[${t.videoId}] своя дорожка: ${name ?: ext}, $dur")
+        dur
+    }
+
+    /** Копия своих дорожек: аудио + обложки + custom.json. Копируется только то, чего в папке ещё нет. Вызывать под lock. */
+    private fun writeCustomBackup() {
+        if (!hasBackupAccess()) return
+        runCatching {
+            val dir = Backup.customDir.apply { mkdirs() }
+            val entries = ArrayList<CustomEntry>()
+            for ((k, v) in db) {
+                if (!v.optBoolean("custom", false) || !idOk.matches(k)) continue
+                val a = audioFile(k) ?: continue
+                val audioName = "$k.${a.extension}"
+                val dst = File(dir, audioName)
+                if (!dst.isFile || dst.length() != a.length()) copyAtomic(a, dst)
+                var coverName = ""
+                val c = coverFile(k)
+                if (c.exists()) {
+                    val cd = File(dir, "$k.jpg")
+                    if (!cd.isFile || cd.length() != c.length()) copyAtomic(c, cd)
+                    coverName = cd.name
+                }
+                entries += CustomEntry(k, v.optString("title"), v.optString("artist"), v.optString("duration"),
+                    v.optString("thumb"), audioName, coverName, v.optString("customName"))
+            }
+            // убираем только свои устаревшие файлы (например, прежнее расширение того же трека)
+            val keep = entries.flatMap { listOf(it.audio, it.cover) }.toSet()
+            val ids = entries.map { it.id }.toSet()
+            dir.listFiles()?.forEach { f -> if (f.name !in keep && f.nameWithoutExtension in ids) f.delete() }
+            Backup.writeCustom(entries)
+        }.onFailure { Dbg.log("custom backup: $it") }
+    }
+
+    /**
+     * Двусторонняя синхронизация своих дорожек с копией в памяти телефона:
+     * дорожки из копии, которых нет локально (после переустановки), возвращаются и снова привязываются
+     * к своим трекам; локальные — дописываются в копию. Возвращает (восстановлено, всего своих)
+     * или null, если нет доступа к файлам.
+     */
+    fun syncCustom(): Pair<Int, Int>? = synchronized(lock) {
+        if (!hasBackupAccess()) return null
+        val dir = Backup.customDir
+        var restored = 0
+        for (e in Backup.readCustom()) {
+            if (!idOk.matches(e.id)) continue
+            val local = db[e.id]
+            if (local?.optBoolean("custom", false) == true && audioFile(e.id) != null) continue
+            val src = File(dir, File(e.audio).name)
+            if (!src.isFile || src.length() == 0L) continue
+            runCatching {
+                deleteAudio(e.id)
+                copyAtomic(src, File(audioDir, "${e.id}.${src.extension.ifBlank { "mp3" }}"))
+                if (e.cover.isNotBlank()) {
+                    val cs = File(dir, File(e.cover).name)
+                    val cd = coverFile(e.id)
+                    if (cs.isFile && !cd.exists()) copyAtomic(cs, cd)
+                }
+                val o = local ?: JSONObject().put("title", e.title).put("artist", e.artist)
+                    .put("thumb", e.thumb).also { db[e.id] = it }
+                if (e.duration.isNotBlank()) o.put("duration", e.duration)
+                o.put("custom", true).put("customName", e.name)
+                restored++
+            }.onFailure { Dbg.log("[${e.id}] восстановление своей дорожки: $it") }
+        }
+        if (restored > 0) saveDb()
+        writeCustomBackup()
+        restored to db.values.count { it.optBoolean("custom", false) }
     }
 
     // ---------- сеть ----------

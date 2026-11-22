@@ -30,6 +30,7 @@ object Ic {
     val NEXT = arrayOf("M16 5h2v14h-2zM4 5v14l11-7z")
     val PLAY = arrayOf("M7 4.5v15l13-7.5z")
     val PAUSE = arrayOf("M6 4h4v16H6zM14 4h4v16h-4z")
+    val MUSIC = arrayOf("M9 18V5l12-2v13", "M3 18a3 3 0 1 0 6 0a3 3 0 1 0 -6 0", "M15 16a3 3 0 1 0 6 0a3 3 0 1 0 -6 0")
     val CHEVRON = arrayOf("m6 9 6 6 6-6")
     val REPEAT = arrayOf("M17 2l4 4-4 4", "M3 11V9a3 3 0 0 1 3-3h15", "M7 22l-4-4 4-4", "M21 13v2a3 3 0 0 1-3 3H3")
     val LYRICS = arrayOf("M4 6h16M4 12h10M4 18h16")
