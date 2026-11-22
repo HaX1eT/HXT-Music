@@ -210,8 +210,9 @@ class Library(ctx: Context, private val client: OkHttpClient) {
 
     private val idOk = Regex("[A-Za-z0-9_-]{5,32}")
 
-    private fun deleteAudio(vid: String) {
-        audioDir.listFiles()?.filter { it.name.startsWith("$vid.") }?.forEach { it.delete() }
+    /** Удаляет все аудиофайлы трека, кроме `keep` (временный файл, из которого сейчас делается новая дорожка). */
+    private fun deleteAudio(vid: String, keep: File? = null) {
+        audioDir.listFiles()?.filter { it.name.startsWith("$vid.") && it != keep }?.forEach { it.delete() }
     }
 
     private fun copyAtomic(src: File, dst: File) {
@@ -264,7 +265,7 @@ class Library(ctx: Context, private val client: OkHttpClient) {
                 if (part.length() == 0L) throw IOException("Пустой файл")
                 val ms = probeDuration(part)
                 if (ms == null || ms <= 0L) throw IOException("Файл не похож на аудио")
-                deleteAudio(t.videoId)
+                deleteAudio(t.videoId, keep = part)
                 if (!part.renameTo(dest)) throw IOException("Не удалось сохранить файл")
                 fmtTime(ms)
             } finally {
