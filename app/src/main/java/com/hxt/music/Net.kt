@@ -99,6 +99,9 @@ object Music {
             try {
                 Dbg.log("[$vid] yt-dlp: запрос")
                 return audioViaYtDlp(vid).also { Dbg.log("[$vid] yt-dlp: ок за ${ms()}") }
+            } catch (e: InterruptedException) {
+                Dbg.log("[$vid] yt-dlp: отменено")
+                throw e
             } catch (e: Exception) {
                 Dbg.log("[$vid] yt-dlp: ОШИБКА за ${ms()}: ${e.message}")
                 errors += "YT: ${e.message ?: "ошибка"}"
@@ -107,6 +110,7 @@ object Music {
             Dbg.log("[$vid] yt-dlp не запущен — пропуск")
             errors += "YT: не запущен"
         }
+        if (Thread.interrupted()) throw InterruptedException()   // отменено — запасные способы не нужны
         try {
             Dbg.log("[$vid] NewPipe: запрос")
             return audioViaNewPipe(vid).also { Dbg.log("[$vid] NewPipe: ок за ${ms()}") }
@@ -114,6 +118,7 @@ object Music {
             Dbg.log("[$vid] NewPipe: ОШИБКА за ${ms()}: ${e.message}")
             errors += "NP: ${e.message ?: "ошибка"}"
         }
+        if (Thread.interrupted()) throw InterruptedException()
         try {
             Dbg.log("[$vid] VR: запрос")
             return audioViaAndroidVr(vid).also { Dbg.log("[$vid] VR: ок за ${ms()}") }
@@ -153,6 +158,9 @@ object Music {
             throw IOException("таймаут 45 с")
         } catch (e: java.util.concurrent.ExecutionException) {
             throw IOException(e.cause?.message ?: "ошибка")
+        } catch (e: InterruptedException) {
+            task.cancel(true)   // прерываем и сам yt-dlp, чтобы не держал ytLock
+            throw e
         }
     }
 

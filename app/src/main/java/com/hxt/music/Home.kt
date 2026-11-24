@@ -162,7 +162,8 @@ private fun LikedBox(vm: MusicVM, dock: Dp) {
             T("Liked", 17, FontWeight.SemiBold, display = true)
             Spacer(Modifier.width(10.dp))
             val cnt = when {
-                vm.editing -> "Порядок — перетаскиванием, ♪ — своя дорожка"
+                vm.editing -> "Порядок · ♪ — своя дорожка"
+                vm.dlAllActive -> "Скачано ${vm.dlAllDone} из ${vm.dlAllTotal}"
                 list.isNotEmpty() -> "${list.size} треков"
                 else -> ""
             }
@@ -177,12 +178,52 @@ private fun LikedBox(vm: MusicVM, dock: Dp) {
                 list.isNotEmpty(),
                 enter = scaleIn(tween(350, easing = Ease), initialScale = .6f) + fadeIn(),
                 exit = scaleOut(targetScale = .6f) + fadeOut(),
-            ) { EditButton(vm.editing) { vm.editing = !vm.editing } }
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    AnimatedVisibility(
+                        vm.dlAllActive || list.any { !it.downloaded },
+                        enter = scaleIn(tween(350, easing = Ease), initialScale = .6f) + fadeIn(),
+                        exit = scaleOut(targetScale = .6f) + fadeOut(),
+                    ) {
+                        Row {
+                            DownloadAllButton(vm)
+                            Spacer(Modifier.width(8.dp))
+                        }
+                    }
+                    EditButton(vm.editing) { vm.editing = !vm.editing }
+                }
+            }
         }
         if (list.isEmpty()) {
             EmptyBox("Здесь пока пусто", "Нажмите ♥ у любого трека или импортируйте список в настройках.")
         } else {
             LikedList(vm, dock)
+        }
+    }
+}
+
+/** «Скачать все»: иконка и маленький прогресс-бар внутри кнопки; повторное нажатие во время загрузки останавливает её. */
+@Composable
+private fun DownloadAllButton(vm: MusicVM) {
+    val shape = RoundedCornerShape(13.dp)
+    val active = vm.dlAllActive
+    val target = if (active && vm.dlAllTotal > 0) ((vm.dlAllDone + vm.dlAllFrac) / vm.dlAllTotal).coerceIn(0f, 1f) else 0f
+    val p by animateFloatAsState(target, tween(300), label = "dlAll")
+    Box(
+        Modifier.size(40.dp).clip(shape).background(Col.Panel).border(1.dp, if (active) Col.RedHi else Col.Line, shape)
+            .pressable(onClick = { vm.toggleDownloadAll() }),
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(Modifier.offset(y = if (active) (-4).dp else 0.dp)) {
+            Svg(if (active) Ic.CLEAR else Ic.DOWNLOAD, if (active) 16.dp else 19.dp, if (active) Col.RedHi else Col.Muted, stroke = 2.4f)
+        }
+        if (active) {
+            Box(
+                Modifier.align(Alignment.BottomCenter).padding(bottom = 6.dp).width(24.dp).height(3.dp)
+                    .clip(CircleShape).background(Col.Line),
+            ) {
+                Box(Modifier.fillMaxHeight().fillMaxWidth(p).background(Brush.linearGradient(listOf(Col.RedHi, Col.RedDeep))))
+            }
         }
     }
 }

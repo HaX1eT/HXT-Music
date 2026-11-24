@@ -20,8 +20,7 @@ data class CustomEntry(
     val artist: String,
     val duration: String,
     val thumb: String,
-    val audio: String,   // имя аудиофайла в папке custom
-    val cover: String,   // имя файла обложки в папке custom ("" — нет)
+    val audio: String,   // имя аудиофайла в папке custom (обложка не копируется: берётся актуальная по thumb-URL)
     val name: String,    // исходное имя файла, выбранного пользователем
 )
 
@@ -29,7 +28,7 @@ data class CustomEntry(
  * Резервная копия Liked вне папки приложения: /storage/emulated/0/HXT Music/liked.json.
  * Только метаданные (id, название, автор, длительность, обложка-URL) и порядок — без аудио.
  * Свои звуковые дорожки копируются ЦЕЛИКОМ в /storage/emulated/0/HXT Music/custom/ вместе с custom.json
- * (он связывает каждый аудиофайл с треком: id, название, обложка).
+ * (он связывает каждый аудиофайл с треком: id, название, автор, ссылка на обложку). Сами обложки не копируются.
  * Переживает удаление приложения. После переустановки нужно снова выдать доступ к файлам.
  */
 object Backup {
@@ -44,7 +43,7 @@ object Backup {
         List(a.length()) {
             val o = a.getJSONObject(it)
             CustomEntry(o.getString("id"), o.optString("title"), o.optString("artist"), o.optString("duration"),
-                o.optString("thumb"), o.getString("audio"), o.optString("cover"), o.optString("name"))
+                o.optString("thumb"), o.getString("audio"), o.optString("name"))
         }
     }.getOrElse { Dbg.log("custom read: $it"); emptyList() }
 
@@ -54,7 +53,7 @@ object Backup {
             list.forEach {
                 arr.put(JSONObject().put("id", it.id).put("title", it.title).put("artist", it.artist)
                     .put("duration", it.duration).put("thumb", it.thumb).put("audio", it.audio)
-                    .put("cover", it.cover).put("name", it.name))
+                    .put("name", it.name))
             }
             val f = customFile
             f.parentFile?.mkdirs()

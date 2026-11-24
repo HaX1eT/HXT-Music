@@ -1,6 +1,9 @@
 package com.hxt.music
 
 import android.content.Context
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.runInterruptible
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.provider.OpenableColumns
@@ -155,16 +158,20 @@ class Library(ctx: Context, private val client: OkHttpClient) {
     }
 
     /** Скачивает аудио и обложку, только если их ещё нет. */
-    suspend fun ensureDownloaded(t: Track) = withContext(Dispatchers.IO) {
+    suspend fun ensureDownloaded(t: Track, onProgress: ((Float) -> Unit)? = null) = withContext(Dispatchers.IO) {
         val mu = dlLocks.getOrPut(t.videoId) { Mutex() }
         mu.withLock {
             if (audioFile(t.videoId) == null) {
                 try {
                     Dbg.log("[${t.videoId}] скачивание: ${t.title}")
-                    val (url, ext) = Music.audioStream(t.videoId)
+                    // runInterruptible: при отмене (юзер включил другой трек) поиск ссылки прерывается сразу
+                    val (url, ext) = runInterruptible(Dispatchers.IO) { Music.audioStream(t.videoId) }
                     Dbg.log("[${t.videoId}] ссылка: хост=${runCatching { android.net.Uri.parse(url).host }.getOrNull()}, ext=$ext")
-                    download(url, File(audioDir, "${t.videoId}.$ext"))
+                    download(url, File(audioDir, "${t.videoId}.$ext"), onProgress) { !isActive }
                     Dbg.log("[${t.videoId}] файл сохранён")
+                } catch (e: CancellationException) {
+                    Dbg.log("[${t.videoId}] скачивание отменено")
+                    throw e
                 } catch (e: Exception) {
                     Dbg.log("[${t.videoId}] ОШИБКА скачивания: $e")
                     throw e
@@ -288,7 +295,7 @@ class Library(ctx: Context, private val client: OkHttpClient) {
         dur
     }
 
-    /** Копия своих дорожек: аудио + обложки + custom.json. Копируется только то, чего в папке ещё нет. Вызывать под lock. */
+    /** Копия своих дорожек: аудио + custom.json (обложки не копируются — грузятся актуальные по ссылке). Копируется только то, чего в папке ещё нет. Вызывать под lock. */
     private fun writeCustomBackup() {
         if (!hasBackupAccess()) return
         runCatching {
@@ -300,18 +307,11 @@ class Library(ctx: Context, private val client: OkHttpClient) {
                 val audioName = "$k.${a.extension}"
                 val dst = File(dir, audioName)
                 if (!dst.isFile || dst.length() != a.length()) copyAtomic(a, dst)
-                var coverName = ""
-                val c = coverFile(k)
-                if (c.exists()) {
-                    val cd = File(dir, "$k.jpg")
-                    if (!cd.isFile || cd.length() != c.length()) copyAtomic(c, cd)
-                    coverName = cd.name
-                }
                 entries += CustomEntry(k, v.optString("title"), v.optString("artist"), v.optString("duration"),
-                    v.optString("thumb"), audioName, coverName, v.optString("customName"))
+                    v.optString("thumb"), audioName, v.optString("customName"))
             }
             // убираем только свои устаревшие файлы (например, прежнее расширение того же трека)
-            val keep = entries.flatMap { listOf(it.audio, it.cover) }.toSet()
+            val keep = entries.map { it.audio }.toSet()   // заодно чистит обложки .jpg, оставшиеся от прошлой версии
             val ids = entries.map { it.id }.toSet()
             dir.listFiles()?.forEach { f -> if (f.name !in keep && f.nameWithoutExtension in ids) f.delete() }
             Backup.writeCustom(entries)
@@ -337,11 +337,6 @@ class Library(ctx: Context, private val client: OkHttpClient) {
             runCatching {
                 deleteAudio(e.id)
                 copyAtomic(src, File(audioDir, "${e.id}.${src.extension.ifBlank { "mp3" }}"))
-                if (e.cover.isNotBlank()) {
-                    val cs = File(dir, File(e.cover).name)
-                    val cd = coverFile(e.id)
-                    if (cs.isFile && !cd.exists()) copyAtomic(cs, cd)
-                }
                 val o = local ?: JSONObject().put("title", e.title).put("artist", e.artist)
                     .put("thumb", e.thumb).also { db[e.id] = it }
                 if (e.duration.isNotBlank()) o.put("duration", e.duration)
@@ -364,10 +359,10 @@ class Library(ctx: Context, private val client: OkHttpClient) {
             r.body!!.bytes()
         }
 
-    private fun download(url: String, dest: File) {
+    private fun download(url: String, dest: File, onProgress: ((Float) -> Unit)? = null, cancelled: () -> Boolean = { false }) {
         val part = File(dest.path + ".part")
         try {
-            ranged(url, part)
+            ranged(url, part, onProgress, cancelled)
             if (part.length() == 0L) throw IOException("Пустой файл")
             dest.delete()
             if (!part.renameTo(dest)) throw IOException("Не удалось сохранить файл")
@@ -391,12 +386,14 @@ class Library(ctx: Context, private val client: OkHttpClient) {
         }
     }
 
-    private fun fetchChunkRetry(url: String, start: Long, step: Long): Chunk {
+    private fun fetchChunkRetry(url: String, start: Long, step: Long, cancelled: () -> Boolean = { false }): Chunk {
         var attempt = 0
         while (true) {
+            if (cancelled()) throw CancellationException("отменено")
             try {
                 return fetchChunk(url, start, step)
             } catch (e: IOException) {
+                if (cancelled()) throw CancellationException("отменено")
                 attempt++
                 Dbg.log("кусок с $start: попытка $attempt: $e")
                 if (attempt >= 4) throw e
@@ -410,14 +407,14 @@ class Library(ctx: Context, private val client: OkHttpClient) {
      * YouTube рвёт соединение («Software caused connection abort»), если качать файл целиком одним запросом.
      * Каждый кусок читается в память и при обрыве перезапрашивается заново.
      */
-    private fun ranged(url: String, out: File) {
+    private fun ranged(url: String, out: File, onProgress: ((Float) -> Unit)? = null, cancelled: () -> Boolean = { false }) {
         out.delete()
         val step = 1_048_576L
         var start = 0L
         var total = -1L
         out.outputStream().use { o ->
             while (total < 0 || start < total) {
-                val c = fetchChunkRetry(url, start, step)
+                val c = fetchChunkRetry(url, start, step, cancelled)
                 if (c.whole && start != 0L) throw IOException("сервер игнорирует Range")
                 if (c.bytes.isEmpty()) throw IOException("пустой кусок")
                 o.write(c.bytes)
@@ -428,6 +425,7 @@ class Library(ctx: Context, private val client: OkHttpClient) {
                     c.bytes.size < step -> start
                     else -> -1L
                 }
+                if (total > 0) onProgress?.invoke((start.toFloat() / total).coerceIn(0f, 1f))
             }
         }
         Dbg.log("ranged: готово, $start байт")

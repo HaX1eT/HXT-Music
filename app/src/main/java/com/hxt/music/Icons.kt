@@ -24,6 +24,7 @@ object Ic {
     val BACK = arrayOf("M19 12H5M11 5l-7 7 7 7")
     val CLEAR = arrayOf("M6 6l12 12M18 6 6 18")
     val PEN = arrayOf("M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z")
+    val DOWNLOAD = arrayOf("M12 4v11", "m7 11 5 5 5-5", "M5 20h14")
     val CHECK = arrayOf("M5 12.5l4.5 4.5L19 7.5")
     val HEART = arrayOf("M12 21s-7.5-4.6-9.6-9.2C.9 8.3 3 4.5 6.7 4.5c2 0 3.5 1.1 5.3 3 1.8-1.9 3.3-3 5.3-3 3.7 0 5.8 3.8 4.3 7.3C19.5 16.4 12 21 12 21z")
     val PREV = arrayOf("M6 5h2v14H6zM20 5v14L9 12z")

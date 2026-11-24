@@ -13,6 +13,7 @@ import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -42,6 +43,17 @@ class MusicVM(app: Application) : AndroidViewModel(app) {
     var positionMs by mutableLongStateOf(0L)
     var durationMs by mutableLongStateOf(0L)
     var preparing by mutableStateOf(false)
+
+    // «Скачать все» в Liked
+    var dlAllActive by mutableStateOf(false)
+        private set
+    var dlAllTotal by mutableIntStateOf(0)
+        private set
+    var dlAllDone by mutableIntStateOf(0)
+        private set
+    var dlAllFrac by mutableStateOf(0f)   // прогресс текущего трека
+        private set
+    private var dlAllJob: Job? = null
     var repeat by mutableIntStateOf(0)        // 0 выкл, 1 всё, 2 один трек
     var shuffle by mutableStateOf(false)
 
@@ -260,34 +272,83 @@ class MusicVM(app: Application) : AndroidViewModel(app) {
     // ---------- воспроизведение ----------
 
     fun play(list: List<Track>, i: Int) {
-        if (preparing) return
+        val t = list.getOrNull(i) ?: return
+        // тот же трек уже скачивается — не начинаем заново
+        if (preparing && queue.getOrNull(idx)?.videoId == t.videoId) return
         queue = list
         idx = i
         startCurrent()
     }
 
+    private var startJob: Job? = null
+    private var startSeq = 0
+
     private fun startCurrent() {
         val t = queue.getOrNull(idx) ?: return
-        viewModelScope.launch {
-            var file = withContext(Dispatchers.IO) { lib.audioFile(t.videoId) }
-            if (file == null) {
-                preparing = true
-                try {
-                    lib.ensureDownloaded(t)           // скачиваем ОДИН раз
-                    patch(t.videoId, isDownloaded = true)
-                    file = withContext(Dispatchers.IO) { lib.audioFile(t.videoId) }
-                } catch (e: Exception) {
-                    toast("Не удалось загрузить: " + (e.message ?: "ошибка").take(80))
-                    preparing = false
-                    return@launch
+        startJob?.cancel()                 // скачивался другой трек — останавливаем его загрузку
+        val my = ++startSeq
+        startJob = viewModelScope.launch {
+            try {
+                var file = withContext(Dispatchers.IO) { lib.audioFile(t.videoId) }
+                if (file == null) {
+                    preparing = true
+                    try {
+                        lib.ensureDownloaded(t)           // скачиваем ОДИН раз
+                        patch(t.videoId, isDownloaded = true)
+                        file = withContext(Dispatchers.IO) { lib.audioFile(t.videoId) }
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        if (my == startSeq) toast("Не удалось загрузить: " + (e.message ?: "ошибка").take(80))
+                        return@launch
+                    }
+                    if (my == startSeq) preparing = false
                 }
-                preparing = false
+                if (my != startSeq) return@launch   // пока качали, юзер выбрал другой трек
+                val f = file ?: return@launch
+                player.setMediaItem(buildItem(t, f))
+                player.prepare()
+                player.play()
+                refreshLiked()
+            } finally {
+                if (my == startSeq) preparing = false
             }
-            val f = file ?: return@launch
-            player.setMediaItem(buildItem(t, f))
-            player.prepare()
-            player.play()
-            refreshLiked()
+        }
+    }
+
+    /** «Скачать все» в Liked: по очереди докачивает всё, чего нет в памяти. Повторное нажатие — остановка. */
+    fun toggleDownloadAll() {
+        if (dlAllJob?.isActive == true) { dlAllJob?.cancel(); return }
+        val todo = liked.filter { !it.downloaded }
+        if (todo.isEmpty()) { toast("Все треки Liked уже скачаны"); return }
+        dlAllTotal = todo.size
+        dlAllDone = 0
+        dlAllFrac = 0f
+        dlAllActive = true
+        dlAllJob = viewModelScope.launch {
+            var failed = 0
+            try {
+                for (t in todo) {
+                    while (preparing) delay(300)      // трек, который включает пользователь, в приоритете
+                    dlAllFrac = 0f
+                    try {
+                        lib.ensureDownloaded(t) { dlAllFrac = it }
+                        patch(t.videoId, isDownloaded = true)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        failed++
+                    }
+                    dlAllDone++
+                }
+                toast(if (failed == 0) "Скачано треков: ${todo.size}" else "Скачано ${todo.size - failed} из ${todo.size}")
+            } catch (e: CancellationException) {
+                toast("Скачивание остановлено")
+                throw e
+            } finally {
+                dlAllActive = false
+                dlAllFrac = 0f
+            }
         }
     }
 
@@ -295,6 +356,7 @@ class MusicVM(app: Application) : AndroidViewModel(app) {
         val md = MediaMetadata.Builder().setTitle(t.title).setArtist(t.artist)
         val c = lib.coverFile(t.videoId)
         if (c.exists()) runCatching { md.setArtworkData(c.readBytes(), MediaMetadata.PICTURE_TYPE_FRONT_COVER) }
+        else if (t.thumb.isNotBlank()) md.setArtworkUri(Uri.parse(t.thumb))   // локальной обложки нет — берём актуальную по ссылке
         return MediaItem.Builder()
             .setMediaId(t.videoId)
             .setUri(Uri.fromFile(f))
@@ -303,7 +365,7 @@ class MusicVM(app: Application) : AndroidViewModel(app) {
     }
 
     fun step(d: Int) {
-        if (queue.isEmpty() || preparing) return
+        if (queue.isEmpty()) return
         var n = (idx + d + queue.size) % queue.size
         if (shuffle && queue.size > 1) {
             do { n = Random.nextInt(queue.size) } while (n == idx)
